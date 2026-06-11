@@ -87,11 +87,25 @@ class AppLocalizations {
   String get windowsBuildGroupTitle => 'EXE';
   String get installMissingTools =>
       _isRu ? 'Установить недостающие инструменты' : 'Install missing tools';
-  String installToolsSoon(String target) {
+  String get installingTools => _isRu ? 'Установка...' : 'Installing...';
+  String toolInstallSuccess(String detail) {
     return _isRu
-        ? 'Установка инструментов для $target будет добавлена в настройках.'
-        : 'Tool installation for $target will be added to settings.';
+        ? 'Инструменты установлены. $detail'
+        : 'Tools installed. $detail';
   }
+
+  String toolInstallFailed(String detail) {
+    return _isRu
+        ? 'Не удалось установить инструменты. $detail'
+        : 'Could not install tools. $detail';
+  }
+
+  String get exeInstallUnsupported => _isRu
+      ? 'EXE-сборка требует Windows build host или будущий remote builder.'
+      : 'EXE builds require a Windows build host or a future remote builder.';
+  String get rpmHostInstallUnsupported => _isRu
+      ? 'Host rpm-сборка для этой rpm-based системы пока отключена из-за несовместимости с Fedora/RHEL пакетами.'
+      : 'Host rpm builds for this rpm-based system are disabled until Fedora/RHEL package compatibility is handled.';
 
   String debBuildNativeSubtitle(String distribution) {
     return _isRu

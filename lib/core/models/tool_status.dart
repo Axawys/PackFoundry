@@ -6,12 +6,14 @@ class ToolchainGroup {
     required this.subtitle,
     required this.status,
     required this.tools,
+    required this.installTarget,
   });
 
   final String title;
   final String subtitle;
   final ToolAvailability status;
   final List<ToolStatus> tools;
+  final ToolchainInstallTarget installTarget;
 
   ChipTone get chipTone {
     return switch (status) {
@@ -53,3 +55,5 @@ class ToolStatus {
 }
 
 enum ToolAvailability { installed, available, missing }
+
+enum ToolchainInstallTarget { rpm, deb, appImage, exe }

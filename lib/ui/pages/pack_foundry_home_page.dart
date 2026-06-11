@@ -40,9 +40,11 @@ class PackFoundryHomePage extends StatefulWidget {
 }
 
 class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
+  static const _defaultAppName = 'My Flutter App';
+
   final _buildService = BuildService();
   final _toolchainService = ToolchainService();
-  final _appNameController = TextEditingController(text: 'My Flutter App');
+  final _appNameController = TextEditingController(text: _defaultAppName);
   final _widthController = TextEditingController(text: '1280');
   final _heightController = TextEditingController(text: '800');
   final _buildLog = <BuildLogEntry>[];
@@ -51,6 +53,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   String? _iconPath;
   String? _outputPath;
   bool _isBuilding = false;
+  ToolchainInstallTarget? _installingToolTarget;
   int _buildProgress = 0;
   bool _welcomeDialogShown = false;
   int _workspaceIndex = 1;
@@ -121,7 +124,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       _toolchainService.commandAvailability('flutter', ['--version']),
       _linuxToolchainAvailable(),
       _toolchainService.commandAvailability('docker', ['--version']),
-      _toolchainService.commandAvailability('appimagetool', ['--version']),
+      _toolchainService.appImageToolAvailability(),
       _toolchainService.commandAvailability('dpkg-deb', ['--version']),
       _toolchainService.commandAvailability('rpmbuild', ['--version']),
       _toolchainService.commandAvailability('wine', ['--version']),
@@ -257,6 +260,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
           : l10n.debBuildDockerSubtitle(distribution.name),
       status: isNativeDeb ? _nativeDebBuildStatus : _dockerDebBuildStatus,
       tools: tools,
+      installTarget: ToolchainInstallTarget.deb,
     );
   }
 
@@ -280,6 +284,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
           : isNativeRpm
           ? _nativeRpmBuildStatus
           : _dockerRpmBuildStatus,
+      installTarget: ToolchainInstallTarget.rpm,
       tools: [
         if (isNativeRpm) ...[
           _hostSystemTool(l10n, distribution),
@@ -322,6 +327,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       title: l10n.appImageBuildGroupTitle,
       subtitle: l10n.appImageBuildGroupSubtitle,
       status: _appImageBuildStatus,
+      installTarget: ToolchainInstallTarget.appImage,
       tools: [
         _flutterTool(l10n),
         _linuxToolchainTool(l10n),
@@ -340,6 +346,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       title: l10n.windowsBuildGroupTitle,
       subtitle: l10n.windowsBuildGroupSubtitle,
       status: ToolAvailability.missing,
+      installTarget: ToolchainInstallTarget.exe,
       tools: [
         ToolStatus(
           name: 'Windows build host',
@@ -538,6 +545,148 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     return '';
   }
 
+  Future<void> _installTools(ToolchainInstallTarget target) async {
+    if (_installingToolTarget != null) {
+      return;
+    }
+
+    setState(() {
+      _installingToolTarget = target;
+    });
+
+    final l10n = context.l10n;
+    final result = await _runToolInstall(target);
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _installingToolTarget = null;
+    });
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          result.success
+              ? l10n.toolInstallSuccess(result.message)
+              : l10n.toolInstallFailed(result.message),
+        ),
+      ),
+    );
+
+    if (result.success && widget.enableToolchainDiagnostics) {
+      await _refreshToolchainStatus();
+    }
+  }
+
+  Future<ToolInstallResult> _runToolInstall(
+    ToolchainInstallTarget target,
+  ) async {
+    final distribution = _hostDistribution;
+    return switch (target) {
+      ToolchainInstallTarget.rpm => _installRpmTools(distribution),
+      ToolchainInstallTarget.deb => _installDebTools(distribution),
+      ToolchainInstallTarget.appImage => _installAppImageTools(distribution),
+      ToolchainInstallTarget.exe => ToolInstallResult.failure(
+        context.l10n.exeInstallUnsupported,
+      ),
+    };
+  }
+
+  Future<ToolInstallResult> _installRpmTools(_HostDistribution distribution) {
+    if (distribution.family == _LinuxDistributionFamily.rpm) {
+      return _toolchainService.installSystemPackages(
+        packagesByManager: const {
+          'dnf': ['clang', 'cmake', 'ninja-build', 'gtk3-devel', 'rpm-build'],
+          'apt-get': ['clang', 'cmake', 'ninja-build', 'libgtk-3-dev', 'rpm'],
+          'zypper': ['clang', 'cmake', 'ninja', 'gtk3-devel', 'rpm-build'],
+          'pacman': ['clang', 'cmake', 'ninja', 'gtk3', 'rpm-tools'],
+        },
+      );
+    }
+
+    if (distribution.family == _LinuxDistributionFamily.unsupportedRpm) {
+      return Future.value(
+        ToolInstallResult.failure(context.l10n.rpmHostInstallUnsupported),
+      );
+    }
+
+    return _installDockerTools();
+  }
+
+  Future<ToolInstallResult> _installDebTools(_HostDistribution distribution) {
+    if (distribution.family == _LinuxDistributionFamily.deb) {
+      return _toolchainService.installSystemPackages(
+        packagesByManager: const {
+          'dnf': ['clang', 'cmake', 'ninja-build', 'gtk3-devel', 'dpkg-dev'],
+          'apt-get': [
+            'clang',
+            'cmake',
+            'ninja-build',
+            'libgtk-3-dev',
+            'dpkg-dev',
+          ],
+          'zypper': ['clang', 'cmake', 'ninja', 'gtk3-devel', 'dpkg'],
+          'pacman': ['clang', 'cmake', 'ninja', 'gtk3', 'dpkg'],
+        },
+      );
+    }
+
+    return _installDockerTools();
+  }
+
+  Future<ToolInstallResult> _installAppImageTools(
+    _HostDistribution distribution,
+  ) async {
+    ToolInstallResult? systemResult;
+    if (_flutterStatus != ToolAvailability.installed ||
+        _linuxToolchainStatus != ToolAvailability.installed) {
+      systemResult = await _toolchainService.installSystemPackages(
+        packagesByManager: const {
+          'dnf': ['clang', 'cmake', 'ninja-build', 'gtk3-devel'],
+          'apt-get': ['clang', 'cmake', 'ninja-build', 'libgtk-3-dev'],
+          'zypper': ['clang', 'cmake', 'ninja', 'gtk3-devel'],
+          'pacman': ['clang', 'cmake', 'ninja', 'gtk3'],
+        },
+      );
+      if (!systemResult.success) {
+        return systemResult;
+      }
+    }
+
+    if (_appImageToolStatus == ToolAvailability.installed) {
+      return systemResult ??
+          const ToolInstallResult.success(
+            'Required tools are already installed.',
+          );
+    }
+
+    final appImageToolResult = await _toolchainService.installAppImageTool();
+    if (!appImageToolResult.success) {
+      return appImageToolResult;
+    }
+
+    if (systemResult != null) {
+      return ToolInstallResult.success(
+        '${systemResult.message}\n${appImageToolResult.message}',
+      );
+    }
+    return appImageToolResult;
+  }
+
+  Future<ToolInstallResult> _installDockerTools() {
+    return _toolchainService.installSystemPackages(
+      packagesByManager: const {
+        'dnf': ['moby-engine', 'docker-cli', 'containerd'],
+        'apt-get': ['docker.io'],
+        'zypper': ['docker'],
+        'pacman': ['docker'],
+      },
+    );
+  }
+
   @override
   void dispose() {
     _appNameController.dispose();
@@ -613,6 +762,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     }
 
     final windowSize = _readFlutterWindowSize(path);
+    final projectAppName = _readProjectAppName(path);
 
     setState(() {
       _projectPath = path;
@@ -620,7 +770,37 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
         _widthController.text = windowSize.width.toString();
         _heightController.text = windowSize.height.toString();
       }
+      if (projectAppName != null && _shouldAutofillAppName) {
+        _appNameController.text = projectAppName;
+      }
     });
+  }
+
+  bool get _shouldAutofillAppName {
+    final currentName = _appNameController.text.trim();
+    return currentName.isEmpty || currentName == _defaultAppName;
+  }
+
+  String? _readProjectAppName(String projectPath) {
+    final file = File(_joinPath(projectPath, 'pubspec.yaml'));
+    if (!file.existsSync()) {
+      return null;
+    }
+
+    final match = RegExp(
+      r'^name:\s*([^\s#]+)',
+      multiLine: true,
+    ).firstMatch(file.readAsStringSync());
+    final rawName = match?.group(1)?.trim();
+    if (rawName == null || rawName.isEmpty) {
+      return null;
+    }
+
+    return rawName
+        .split(RegExp(r'[-_\s]+'))
+        .where((part) => part.isNotEmpty)
+        .map((part) => part[0].toUpperCase() + part.substring(1))
+        .join();
   }
 
   _WindowSize? _readFlutterWindowSize(String projectPath) {
@@ -752,6 +932,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
               index: _workspaceIndex,
               themeMode: widget.themeMode,
               toolGroups: toolGroups,
+              installingToolTarget: _installingToolTarget,
               projectPath: _projectPath,
               iconPath: _iconPath,
               outputPath: _outputPath,
@@ -764,6 +945,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
               progress: _buildProgress,
               log: _buildLog,
               onThemeModeChanged: widget.onThemeModeChanged,
+              onInstallTools: _installTools,
               onChooseProject: _chooseProjectFolder,
               onChooseIcon: _chooseIconFile,
               onChooseOutput: _chooseOutputFolder,
@@ -857,6 +1039,7 @@ class _WorkspaceContent extends StatelessWidget {
     required this.index,
     required this.themeMode,
     required this.toolGroups,
+    required this.installingToolTarget,
     required this.projectPath,
     required this.iconPath,
     required this.outputPath,
@@ -869,6 +1052,7 @@ class _WorkspaceContent extends StatelessWidget {
     required this.progress,
     required this.log,
     required this.onThemeModeChanged,
+    required this.onInstallTools,
     required this.onChooseProject,
     required this.onChooseIcon,
     required this.onChooseOutput,
@@ -879,6 +1063,7 @@ class _WorkspaceContent extends StatelessWidget {
   final int index;
   final ThemeMode themeMode;
   final List<ToolchainGroup> toolGroups;
+  final ToolchainInstallTarget? installingToolTarget;
   final String? projectPath;
   final String? iconPath;
   final String? outputPath;
@@ -891,6 +1076,7 @@ class _WorkspaceContent extends StatelessWidget {
   final int progress;
   final List<BuildLogEntry> log;
   final ValueChanged<ThemeMode> onThemeModeChanged;
+  final ValueChanged<ToolchainInstallTarget> onInstallTools;
   final VoidCallback onChooseProject;
   final VoidCallback onChooseIcon;
   final VoidCallback onChooseOutput;
@@ -903,7 +1089,11 @@ class _WorkspaceContent extends StatelessWidget {
       0 => [
         ThemeSettingsPanel(themeMode: themeMode, onChanged: onThemeModeChanged),
         const SizedBox(height: 16),
-        ToolchainPanel(groups: toolGroups),
+        ToolchainPanel(
+          groups: toolGroups,
+          installingTarget: installingToolTarget,
+          onInstallTools: onInstallTools,
+        ),
       ],
       1 => [
         ProjectPanel(

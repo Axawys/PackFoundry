@@ -5,9 +5,16 @@ import '../../l10n/app_localizations.dart';
 import 'section.dart';
 
 class ToolchainPanel extends StatelessWidget {
-  const ToolchainPanel({required this.groups, super.key});
+  const ToolchainPanel({
+    required this.groups,
+    required this.installingTarget,
+    required this.onInstallTools,
+    super.key,
+  });
 
   final List<ToolchainGroup> groups;
+  final ToolchainInstallTarget? installingTarget;
+  final ValueChanged<ToolchainInstallTarget> onInstallTools;
 
   @override
   Widget build(BuildContext context) {
@@ -17,7 +24,11 @@ class ToolchainPanel extends StatelessWidget {
       child: Column(
         children: [
           for (final group in groups) ...[
-            _ToolchainGroupCard(group: group),
+            _ToolchainGroupCard(
+              group: group,
+              installing: installingTarget == group.installTarget,
+              onInstallTools: onInstallTools,
+            ),
             if (group != groups.last) const SizedBox(height: 18),
           ],
         ],
@@ -27,9 +38,15 @@ class ToolchainPanel extends StatelessWidget {
 }
 
 class _ToolchainGroupCard extends StatelessWidget {
-  const _ToolchainGroupCard({required this.group});
+  const _ToolchainGroupCard({
+    required this.group,
+    required this.installing,
+    required this.onInstallTools,
+  });
 
   final ToolchainGroup group;
+  final bool installing;
+  final ValueChanged<ToolchainInstallTarget> onInstallTools;
 
   @override
   Widget build(BuildContext context) {
@@ -87,17 +104,19 @@ class _ToolchainGroupCard extends StatelessWidget {
                         Align(
                           alignment: Alignment.centerLeft,
                           child: OutlinedButton.icon(
-                            onPressed: () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    l10n.installToolsSoon(group.title),
-                                  ),
-                                ),
-                              );
-                            },
-                            icon: const Icon(Icons.download_outlined),
-                            label: Text(l10n.installMissingTools),
+                            onPressed: installing
+                                ? null
+                                : () => onInstallTools(group.installTarget),
+                            icon: Icon(
+                              installing
+                                  ? Icons.hourglass_top_outlined
+                                  : Icons.download_outlined,
+                            ),
+                            label: Text(
+                              installing
+                                  ? l10n.installingTools
+                                  : l10n.installMissingTools,
+                            ),
                           ),
                         ),
                       ],

@@ -344,6 +344,19 @@ class BuildService {
           bundleDirectory: bundleDirectory,
           outputDirectory: outputDirectory,
         );
+      } else if (target.artifact == 'rpm package') {
+        yield const BuildEvent.log(
+          BuildLogEntry(
+            title: 'Packaging RPM',
+            detail: 'Preparing rpmbuild tree and package metadata.',
+            state: BuildLogState.running,
+          ),
+        );
+        yield* _createRpmPackage(
+          configuration: configuration,
+          bundleDirectory: bundleDirectory,
+          outputDirectory: outputDirectory,
+        );
       } else if (target.artifact == 'tar.gz bundle') {
         yield* _createTarGzBundle(
           appName: configuration.appName,
@@ -528,6 +541,326 @@ class BuildService {
         ),
       );
     }
+  }
+
+  Stream<BuildEvent> _createRpmPackage({
+    required BuildConfiguration configuration,
+    required Directory bundleDirectory,
+    required Directory outputDirectory,
+  }) async* {
+    Directory? tempDirectory;
+    try {
+      final rpmbuild = await _findExecutable('rpmbuild');
+      if (rpmbuild == null) {
+        yield const BuildEvent.log(
+          BuildLogEntry(
+            title: 'RPM packaging failed',
+            detail: 'rpmbuild was not found in PATH.',
+            state: BuildLogState.warning,
+          ),
+        );
+        return;
+      }
+
+      final executable = await _findBundleExecutable(bundleDirectory);
+      if (executable == null) {
+        yield const BuildEvent.log(
+          BuildLogEntry(
+            title: 'RPM packaging failed',
+            detail:
+                'Could not find the executable in the Flutter Linux bundle.',
+            state: BuildLogState.warning,
+          ),
+        );
+        return;
+      }
+
+      final appName = configuration.appName.trim().isEmpty
+          ? 'Flutter App'
+          : configuration.appName.trim();
+      final packageName = _slugify(appName);
+      final rpmVersion = await _readRpmVersion(configuration.projectPath);
+      final desktopFileName = '$packageName.desktop';
+      final iconFileName = await _prepareRpmIcon(
+        configuration: configuration,
+        packageName: packageName,
+      );
+
+      tempDirectory = await Directory.systemTemp.createTemp(
+        'pack_foundry_rpm_',
+      );
+      final topDirectory = Directory(_joinPath(tempDirectory.path, 'rpmbuild'));
+      final specsDirectory = Directory(_joinPath(topDirectory.path, 'SPECS'));
+      final rpmsDirectory = Directory(_joinPath(topDirectory.path, 'RPMS'));
+      final assetsDirectory = Directory(
+        _joinPath(tempDirectory.path, 'assets'),
+      );
+      await specsDirectory.create(recursive: true);
+      await assetsDirectory.create(recursive: true);
+
+      final desktopFile = File(
+        _joinPath(assetsDirectory.path, desktopFileName),
+      );
+      await desktopFile.writeAsString('''[Desktop Entry]
+Type=Application
+Name=${_escapeDesktopValue(appName)}
+Exec=/opt/$packageName/${_basename(executable.path)}
+Icon=$packageName
+Categories=Utility;
+Terminal=false
+''');
+
+      final iconSource = iconFileName == null
+          ? await _writeFallbackRpmIcon(assetsDirectory, packageName)
+          : File(iconFileName);
+      final specFile = File(
+        _joinPath(specsDirectory.path, '$packageName.spec'),
+      );
+      await specFile.writeAsString(
+        _rpmSpec(
+          appName: appName,
+          packageName: packageName,
+          version: rpmVersion.version,
+          release: rpmVersion.release,
+          bundleDirectory: bundleDirectory,
+          desktopFile: desktopFile,
+          iconFile: iconSource,
+          executableName: _basename(executable.path),
+        ),
+      );
+
+      final result = await Process.run(
+        rpmbuild.path,
+        ['-bb', '--define', '_topdir ${topDirectory.path}', specFile.path],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+
+      if (result.exitCode != 0) {
+        yield BuildEvent.log(
+          BuildLogEntry(
+            title: 'RPM packaging failed',
+            detail: _shortProcessOutput(result),
+            state: BuildLogState.warning,
+          ),
+        );
+        return;
+      }
+
+      final rpmFile = await _findFirstFileWithExtension(rpmsDirectory, '.rpm');
+      if (rpmFile == null) {
+        yield BuildEvent.log(
+          BuildLogEntry(
+            title: 'RPM packaging failed',
+            detail: 'rpmbuild finished, but no .rpm file was found.',
+            state: BuildLogState.warning,
+          ),
+        );
+        return;
+      }
+
+      final outputFile = File(
+        _joinPath(
+          outputDirectory.path,
+          '${_safeFileName(appName)}-${rpmVersion.version}-${rpmVersion.release}.${_rpmArchitecture()}.rpm',
+        ),
+      );
+      if (outputFile.existsSync()) {
+        await outputFile.delete();
+      }
+      await rpmFile.copy(outputFile.path);
+
+      yield BuildEvent.log(
+        BuildLogEntry(
+          title: 'Created RPM package',
+          detail: outputFile.path,
+          state: BuildLogState.success,
+        ),
+      );
+    } finally {
+      if (tempDirectory != null && tempDirectory.existsSync()) {
+        await tempDirectory.delete(recursive: true);
+      }
+    }
+  }
+
+  String _rpmSpec({
+    required String appName,
+    required String packageName,
+    required String version,
+    required String release,
+    required Directory bundleDirectory,
+    required File desktopFile,
+    required File iconFile,
+    required String executableName,
+  }) {
+    final iconExtension = _extension(iconFile.path).toLowerCase();
+    final iconDestination = iconExtension == '.svg'
+        ? '%{buildroot}/usr/share/icons/hicolor/scalable/apps/$packageName.svg'
+        : '%{buildroot}/usr/share/icons/hicolor/256x256/apps/$packageName.png';
+
+    return '''%global __brp_check_rpaths %{nil}
+
+Name:           $packageName
+Version:        $version
+Release:        $release%{?dist}
+Summary:        ${_rpmHeaderValue(appName)}
+License:        GPL-2.0-only
+Requires:       gtk3, libstdc++, xz-libs
+
+%description
+${_rpmDescription(appName)} packaged with PackFoundry.
+
+%prep
+
+%build
+
+%install
+rm -rf %{buildroot}
+mkdir -p %{buildroot}/opt/$packageName
+cp -a ${_shellQuote(bundleDirectory.path)}/. %{buildroot}/opt/$packageName/
+chmod 755 %{buildroot}/opt/$packageName/${_shellQuote(executableName)}
+install -Dm0644 ${_shellQuote(desktopFile.path)} %{buildroot}/usr/share/applications/$packageName.desktop
+install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
+
+%files
+/opt/$packageName
+/usr/share/applications/$packageName.desktop
+/usr/share/icons/hicolor/*/apps/$packageName.*
+
+%changelog
+* ${_rpmChangelogDate()} PackFoundry <packfoundry@localhost> - $version-$release
+- Packaged with PackFoundry
+''';
+  }
+
+  Future<_RpmVersion> _readRpmVersion(String projectPath) async {
+    final pubspec = File(_joinPath(projectPath, 'pubspec.yaml'));
+    if (!pubspec.existsSync()) {
+      return const _RpmVersion(version: '1.0.0', release: '1');
+    }
+
+    final match = RegExp(
+      r'^version:\s*([^\s#]+)',
+      multiLine: true,
+    ).firstMatch(await pubspec.readAsString());
+    final rawVersion = match?.group(1)?.trim();
+    if (rawVersion == null || rawVersion.isEmpty) {
+      return const _RpmVersion(version: '1.0.0', release: '1');
+    }
+
+    final parts = rawVersion.split('+');
+    final version = parts.first.replaceAll(RegExp(r'[^A-Za-z0-9._~]'), '.');
+    final release = parts.length > 1
+        ? parts[1].replaceAll(RegExp(r'[^A-Za-z0-9._~]'), '.')
+        : '1';
+    return _RpmVersion(
+      version: version.isEmpty ? '1.0.0' : version,
+      release: release.isEmpty ? '1' : release,
+    );
+  }
+
+  Future<File?> _findFirstFileWithExtension(
+    Directory directory,
+    String extension,
+  ) async {
+    if (!directory.existsSync()) {
+      return null;
+    }
+
+    await for (final entity in directory.list(recursive: true)) {
+      if (entity is File && entity.path.toLowerCase().endsWith(extension)) {
+        return entity;
+      }
+    }
+    return null;
+  }
+
+  Future<String?> _prepareRpmIcon({
+    required BuildConfiguration configuration,
+    required String packageName,
+  }) async {
+    final iconPath = configuration.iconPath;
+    if (iconPath == null || iconPath.isEmpty) {
+      return null;
+    }
+
+    final source = File(iconPath);
+    if (!source.existsSync()) {
+      return null;
+    }
+    return source.path;
+  }
+
+  Future<File> _writeFallbackRpmIcon(
+    Directory assetsDirectory,
+    String packageName,
+  ) async {
+    final fallbackIcon = File(
+      _joinPath(assetsDirectory.path, '$packageName.svg'),
+    );
+    await fallbackIcon.writeAsString(
+      '''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" rx="48" fill="#0EA5A4"/>
+  <path d="M64 80h86a42 42 0 0 1 0 84H96v44H64V80Zm32 28v28h50a14 14 0 0 0 0-28H96Z" fill="#ffffff"/>
+</svg>
+''',
+    );
+    return fallbackIcon;
+  }
+
+  String _rpmArchitecture() {
+    final architecture = Process.runSync('uname', [
+      '-m',
+    ]).stdout.toString().trim();
+    return switch (architecture) {
+      'x86_64' => 'x86_64',
+      'aarch64' => 'aarch64',
+      'arm64' => 'aarch64',
+      final value when value.isNotEmpty => value,
+      _ => 'x86_64',
+    };
+  }
+
+  String _rpmHeaderValue(String value) {
+    return value.replaceAll('\n', ' ').replaceAll('\r', ' ');
+  }
+
+  String _rpmDescription(String value) {
+    final description = _rpmHeaderValue(value).trim();
+    return description.isEmpty ? 'Flutter application' : description;
+  }
+
+  String _rpmChangelogDate() {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final now = DateTime.now();
+    final weekday = [
+      'Mon',
+      'Tue',
+      'Wed',
+      'Thu',
+      'Fri',
+      'Sat',
+      'Sun',
+    ][now.weekday - 1];
+    return '$weekday ${months[now.month - 1]} ${now.day} ${now.year}';
+  }
+
+  String _shellQuote(String value) {
+    return "'${value.replaceAll("'", "'\\''")}'";
   }
 
   Stream<BuildEvent> _createDebPackageWithDocker({
@@ -1177,6 +1510,13 @@ Terminal=false
         : normalized;
     return trimmed.substring(trimmed.lastIndexOf('/') + 1);
   }
+}
+
+class _RpmVersion {
+  const _RpmVersion({required this.version, required this.release});
+
+  final String version;
+  final String release;
 }
 
 class _ProcessLine {
