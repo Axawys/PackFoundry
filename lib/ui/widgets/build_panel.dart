@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/models/build_log_entry.dart';
+import '../../l10n/app_localizations.dart';
 import 'section.dart';
 
 class BuildPanel extends StatelessWidget {
@@ -21,23 +22,27 @@ class BuildPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+
     return Section(
-      title: 'Build',
+      title: l10n.build,
       icon: Icons.play_circle_outline,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            '$selectedTargets selected target${selectedTargets == 1 ? '' : 's'}',
+            l10n.selectedTargets(selectedTargets),
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 12),
-          LinearProgressIndicator(
-            value: isBuilding || progress > 0 ? progress / 100 : null,
-            minHeight: 8,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          const SizedBox(height: 12),
+          if (isBuilding || progress > 0) ...[
+            LinearProgressIndicator(
+              value: progress / 100,
+              minHeight: 8,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            const SizedBox(height: 12),
+          ],
           FilledButton.icon(
             onPressed: isBuilding || selectedTargets == 0 ? null : onBuild,
             icon: Icon(
@@ -45,7 +50,7 @@ class BuildPanel extends StatelessWidget {
                   ? Icons.hourglass_top_outlined
                   : Icons.rocket_launch_outlined,
             ),
-            label: Text(isBuilding ? 'Building...' : 'Build installers'),
+            label: Text(isBuilding ? l10n.building : l10n.buildInstallers),
           ),
           const SizedBox(height: 16),
           for (final entry in log) _LogEntryTile(entry: entry),

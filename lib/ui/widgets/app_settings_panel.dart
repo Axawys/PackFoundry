@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_localizations.dart';
 import 'section.dart';
 
 class AppSettingsPanel extends StatelessWidget {
@@ -8,9 +9,7 @@ class AppSettingsPanel extends StatelessWidget {
     required this.widthController,
     required this.heightController,
     required this.iconPath,
-    required this.outputPath,
     required this.onChooseIcon,
-    required this.onChooseOutput,
     super.key,
   });
 
@@ -18,20 +17,20 @@ class AppSettingsPanel extends StatelessWidget {
   final TextEditingController widthController;
   final TextEditingController heightController;
   final String? iconPath;
-  final String? outputPath;
   final VoidCallback onChooseIcon;
-  final VoidCallback onChooseOutput;
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+
     return Section(
-      title: 'Application settings',
+      title: l10n.applicationSettings,
       icon: Icons.tune_outlined,
       child: Column(
         children: [
           TextField(
             controller: appNameController,
-            decoration: const InputDecoration(labelText: 'Application name'),
+            decoration: InputDecoration(labelText: l10n.applicationName),
           ),
           const SizedBox(height: 12),
           Row(
@@ -40,7 +39,7 @@ class AppSettingsPanel extends StatelessWidget {
                 child: TextField(
                   controller: widthController,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Window width'),
+                  decoration: InputDecoration(labelText: l10n.windowWidth),
                 ),
               ),
               const SizedBox(width: 12),
@@ -48,7 +47,7 @@ class AppSettingsPanel extends StatelessWidget {
                 child: TextField(
                   controller: heightController,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Window height'),
+                  decoration: InputDecoration(labelText: l10n.windowHeight),
                 ),
               ),
             ],
@@ -57,19 +56,10 @@ class AppSettingsPanel extends StatelessWidget {
           _PathPickerRow(
             icon: Icons.image_outlined,
             path: iconPath,
-            placeholder: 'No icon selected',
+            placeholder: l10n.noIconSelected,
             buttonIcon: Icons.upload_file_outlined,
-            buttonLabel: 'Icon',
+            buttonLabel: l10n.icon,
             onPressed: onChooseIcon,
-          ),
-          const SizedBox(height: 12),
-          _PathPickerRow(
-            icon: Icons.drive_folder_upload_outlined,
-            path: outputPath,
-            placeholder: 'Default: build/pack_foundry',
-            buttonIcon: Icons.folder_special_outlined,
-            buttonLabel: 'Output folder',
-            onPressed: onChooseOutput,
           ),
         ],
       ),

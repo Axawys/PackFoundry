@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/models/build_target.dart';
+import '../../l10n/app_localizations.dart';
 import 'section.dart';
 
 class TargetsPanel extends StatelessWidget {
@@ -15,8 +16,10 @@ class TargetsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+
     return Section(
-      title: 'Installers',
+      title: l10n.installers,
       icon: Icons.checklist_outlined,
       child: Column(
         children: [
@@ -27,8 +30,8 @@ class TargetsPanel extends StatelessWidget {
                   ? (value) => onChanged(target, value ?? false)
                   : null,
               secondary: Icon(_targetIcon(target)),
-              title: Text('${target.platform} ${target.artifact}'),
-              subtitle: Text(target.statusLabel),
+              title: Text(l10n.targetTitle(target.platform, target.artifact)),
+              subtitle: Text(l10n.targetStatusLabel(target.status.name)),
               contentPadding: EdgeInsets.zero,
             ),
         ],

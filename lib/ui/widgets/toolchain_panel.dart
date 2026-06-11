@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/models/tool_status.dart';
+import '../../l10n/app_localizations.dart';
 import 'section.dart';
 import 'status_chip.dart';
 
@@ -12,7 +13,7 @@ class ToolchainPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Section(
-      title: 'Toolchain',
+      title: context.l10n.toolchain,
       icon: Icons.construction_outlined,
       child: Column(
         children: [
@@ -33,6 +34,8 @@ class _ToolRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -50,7 +53,10 @@ class _ToolRow extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 12),
-        StatusChip(label: tool.statusLabel, tone: tool.chipTone),
+        StatusChip(
+          label: l10n.toolAvailabilityLabel(tool.status.name),
+          tone: tool.chipTone,
+        ),
       ],
     );
   }

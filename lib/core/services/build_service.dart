@@ -7,6 +7,9 @@ import '../models/build_log_entry.dart';
 import '../models/build_target.dart';
 
 class BuildService {
+  static const _appImageToolBaseUrl =
+      'https://github.com/AppImage/AppImageKit/releases/download/continuous';
+
   Stream<BuildEvent> build(BuildConfiguration configuration) async* {
     final selectedTargets = configuration.targets
         .where((target) => target.selected)
@@ -45,6 +48,8 @@ class BuildService {
     final linuxTargets = selectedTargets
         .where((target) => target.platform == 'Linux')
         .toList();
+
+    Directory? buildTempDirectory;
 
     try {
       yield BuildEvent.log(
@@ -90,15 +95,21 @@ class BuildService {
       }
 
       yield const BuildEvent.progress(10);
-      yield BuildEvent.log(
-        const BuildLogEntry(
-          title: 'Cleaning Linux build cache',
+      yield const BuildEvent.log(
+        BuildLogEntry(
+          title: 'Preparing temporary build workspace',
           detail:
-              'Removing build/linux to avoid stale CMakeCache paths from moved projects or containers.',
+              'Copying the project and applying window settings without changing source files.',
           state: BuildLogState.running,
         ),
       );
-      await _deleteLinuxBuildCache(projectDirectory);
+
+      final buildWorkspaceInfo = await _createBuildWorkspace(
+        projectDirectory: projectDirectory,
+        configuration: configuration,
+      );
+      buildTempDirectory = buildWorkspaceInfo.tempDirectory;
+      final workspace = buildWorkspaceInfo.workspace;
 
       yield const BuildEvent.progress(15);
       yield const BuildEvent.log(
@@ -109,7 +120,7 @@ class BuildService {
         ),
       );
 
-      final buildResult = await _runFlutterBuild(configuration.projectPath);
+      final buildResult = await _runFlutterBuild(workspace.path);
       if (buildResult.exitCode != 0) {
         yield BuildEvent.log(
           BuildLogEntry(
@@ -130,7 +141,7 @@ class BuildService {
         ),
       );
 
-      final bundleDirectory = await _findLinuxBundle(projectDirectory);
+      final bundleDirectory = await _findLinuxBundle(workspace);
       if (bundleDirectory == null) {
         yield const BuildEvent.log(
           BuildLogEntry(
@@ -144,10 +155,10 @@ class BuildService {
       }
 
       yield* _exportLinuxTargets(
+        configuration: configuration,
         targets: linuxTargets,
         bundleDirectory: bundleDirectory,
         outputDirectory: outputDirectory,
-        appName: configuration.appName,
       );
 
       yield const BuildEvent.progress(100);
@@ -161,8 +172,8 @@ class BuildService {
     } on ProcessException catch (error) {
       yield BuildEvent.log(
         BuildLogEntry(
-          title: 'Could not run Flutter',
-          detail: '${error.message}. Make sure flutter is available in PATH.',
+          title: 'Could not run command',
+          detail: error.message,
           state: BuildLogState.warning,
         ),
       );
@@ -174,61 +185,150 @@ class BuildService {
           state: BuildLogState.warning,
         ),
       );
+    } finally {
+      if (buildTempDirectory != null && buildTempDirectory.existsSync()) {
+        await buildTempDirectory.delete(recursive: true);
+      }
+    }
+  }
+
+  Future<_BuildWorkspace> _createBuildWorkspace({
+    required Directory projectDirectory,
+    required BuildConfiguration configuration,
+  }) async {
+    final tempRoot = await Directory.systemTemp.createTemp(
+      'pack_foundry_build_',
+    );
+    final workspace = Directory(_joinPath(tempRoot.path, 'project'));
+    await _copyProjectDirectory(projectDirectory, workspace);
+    await _applyWindowSizeOverrides(workspace, configuration);
+    return _BuildWorkspace(tempDirectory: tempRoot, workspace: workspace);
+  }
+
+  Future<void> _copyProjectDirectory(
+    Directory source,
+    Directory destination,
+  ) async {
+    await destination.create(recursive: true);
+    await for (final entity in source.list(
+      recursive: true,
+      followLinks: false,
+    )) {
+      final relativePath = entity.path.substring(source.path.length + 1);
+      if (_shouldSkipProjectPath(relativePath)) {
+        continue;
+      }
+
+      final newPath = _joinPath(destination.path, relativePath);
+      if (entity is Directory) {
+        await Directory(newPath).create(recursive: true);
+      } else if (entity is File) {
+        await File(newPath).parent.create(recursive: true);
+        await entity.copy(newPath);
+      }
+    }
+  }
+
+  bool _shouldSkipProjectPath(String relativePath) {
+    final parts = relativePath.split(Platform.pathSeparator);
+    return parts.any((part) {
+      return part == 'build' ||
+          part == '.dart_tool' ||
+          part == '.git' ||
+          part == '.idea';
+    });
+  }
+
+  Future<void> _applyWindowSizeOverrides(
+    Directory workspace,
+    BuildConfiguration configuration,
+  ) async {
+    final width = configuration.windowWidth;
+    final height = configuration.windowHeight;
+    if (width == null || height == null || width <= 0 || height <= 0) {
+      return;
+    }
+
+    await _patchLinuxWindowSize(workspace, width, height);
+    await _patchWindowsWindowSize(workspace, width, height);
+  }
+
+  Future<void> _patchLinuxWindowSize(
+    Directory workspace,
+    int width,
+    int height,
+  ) async {
+    final file = File(
+      _joinPath(workspace.path, 'linux/runner/my_application.cc'),
+    );
+    if (!file.existsSync()) {
+      return;
+    }
+
+    final content = await file.readAsString();
+    final updated = content.replaceFirst(
+      RegExp(r'gtk_window_set_default_size\s*\([^,]+,\s*\d+\s*,\s*\d+\s*\)'),
+      'gtk_window_set_default_size(window, $width, $height)',
+    );
+    if (updated != content) {
+      await file.writeAsString(updated);
+    }
+  }
+
+  Future<void> _patchWindowsWindowSize(
+    Directory workspace,
+    int width,
+    int height,
+  ) async {
+    final file = File(_joinPath(workspace.path, 'windows/runner/main.cpp'));
+    if (!file.existsSync()) {
+      return;
+    }
+
+    final content = await file.readAsString();
+    final updated = content.replaceFirst(
+      RegExp(r'Win32Window::Size\s+size\s*\(\s*\d+\s*,\s*\d+\s*\)'),
+      'Win32Window::Size size($width, $height)',
+    );
+    if (updated != content) {
+      await file.writeAsString(updated);
     }
   }
 
   Stream<BuildEvent> _exportLinuxTargets({
+    required BuildConfiguration configuration,
     required List<BuildTarget> targets,
     required Directory bundleDirectory,
     required Directory outputDirectory,
-    required String appName,
   }) async* {
-    final appSlug = _slugify(appName);
     for (var index = 0; index < targets.length; index++) {
       final target = targets[index];
-      final artifactSlug = _slugify(target.artifact);
 
-      if (target.artifact == 'tar.gz bundle') {
-        final archivePath = _joinPath(
-          outputDirectory.path,
-          '$appSlug-linux.tar.gz',
+      if (target.artifact == 'AppImage') {
+        yield const BuildEvent.log(
+          BuildLogEntry(
+            title: 'Packaging AppImage',
+            detail: 'Preparing AppDir and appimagetool package.',
+            state: BuildLogState.running,
+          ),
         );
-        final archiveResult = await Process.run(
-          'tar',
-          [
-            '-czf',
-            archivePath,
-            '-C',
-            bundleDirectory.parent.path,
-            _basename(bundleDirectory.path),
-          ],
-          runInShell: true,
-          stdoutEncoding: utf8,
-          stderrEncoding: utf8,
+        yield* _createAppImage(
+          configuration: configuration,
+          bundleDirectory: bundleDirectory,
+          outputDirectory: outputDirectory,
         );
-
-        if (archiveResult.exitCode == 0) {
-          yield BuildEvent.log(
-            BuildLogEntry(
-              title: 'Created Linux tar.gz',
-              detail: archivePath,
-              state: BuildLogState.success,
-            ),
-          );
-        } else {
-          yield BuildEvent.log(
-            BuildLogEntry(
-              title: 'tar.gz packaging failed',
-              detail: _shortProcessOutput(archiveResult),
-              state: BuildLogState.warning,
-            ),
-          );
-        }
+      } else if (target.artifact == 'tar.gz bundle') {
+        yield* _createTarGzBundle(
+          appName: configuration.appName,
+          bundleDirectory: bundleDirectory,
+          outputDirectory: outputDirectory,
+        );
       } else {
+        final artifactSlug = _slugify(target.artifact);
         final fallbackDirectory = Directory(
           _joinPath(
             outputDirectory.path,
-            '$appSlug-linux-$artifactSlug-bundle',
+            '${_slugify(configuration.appName)}-linux-$artifactSlug-bundle',
           ),
         );
         await _copyDirectory(bundleDirectory, fallbackDirectory);
@@ -246,6 +346,303 @@ class BuildService {
         55 + (((index + 1) / targets.length) * 40).round(),
       );
     }
+  }
+
+  Stream<BuildEvent> _createAppImage({
+    required BuildConfiguration configuration,
+    required Directory bundleDirectory,
+    required Directory outputDirectory,
+  }) async* {
+    Directory? tempDirectory;
+    try {
+      final appImageTool = await _resolveAppImageTool();
+      final appName = configuration.appName.trim().isEmpty
+          ? 'Flutter App'
+          : configuration.appName.trim();
+      final desktopId = _slugify(appName);
+      final executable = await _findBundleExecutable(bundleDirectory);
+      if (executable == null) {
+        yield const BuildEvent.log(
+          BuildLogEntry(
+            title: 'AppImage packaging failed',
+            detail:
+                'Could not find the executable in the Flutter Linux bundle.',
+            state: BuildLogState.warning,
+          ),
+        );
+        return;
+      }
+
+      tempDirectory = await Directory.systemTemp.createTemp(
+        'pack_foundry_appimage_',
+      );
+      final appDir = Directory(
+        _joinPath(tempDirectory.path, '$desktopId.AppDir'),
+      );
+      final appBinDir = Directory(_joinPath(appDir.path, 'usr/bin'));
+      await appBinDir.create(recursive: true);
+      await _copyDirectory(bundleDirectory, appBinDir);
+
+      await _writeAppRun(
+        appDir: appDir,
+        executableName: _basename(executable.path),
+      );
+      await _writeDesktopFile(
+        appDir: appDir,
+        appName: appName,
+        desktopId: desktopId,
+      );
+      await _prepareAppIcon(
+        appDir: appDir,
+        desktopId: desktopId,
+        iconPath: configuration.iconPath,
+      );
+
+      final appImagePath = _joinPath(
+        outputDirectory.path,
+        '${_safeFileName(appName)}.AppImage',
+      );
+      final appImageFile = File(appImagePath);
+      if (appImageFile.existsSync()) {
+        await appImageFile.delete();
+      }
+
+      final result = await Process.run(
+        appImageTool.path,
+        [appDir.path, appImagePath],
+        environment: {
+          ...Platform.environment,
+          'ARCH': _appImageArchitecture(),
+          'APPIMAGE_EXTRACT_AND_RUN': '1',
+        },
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+
+      if (result.exitCode != 0 || !appImageFile.existsSync()) {
+        yield BuildEvent.log(
+          BuildLogEntry(
+            title: 'AppImage packaging failed',
+            detail: _shortProcessOutput(result),
+            state: BuildLogState.warning,
+          ),
+        );
+        return;
+      }
+
+      await _makeExecutable(appImageFile);
+      yield BuildEvent.log(
+        BuildLogEntry(
+          title: 'Created AppImage',
+          detail: appImagePath,
+          state: BuildLogState.success,
+        ),
+      );
+    } on SocketException catch (error) {
+      yield BuildEvent.log(
+        BuildLogEntry(
+          title: 'Could not download appimagetool',
+          detail: error.message,
+          state: BuildLogState.warning,
+        ),
+      );
+    } on HttpException catch (error) {
+      yield BuildEvent.log(
+        BuildLogEntry(
+          title: 'Could not download appimagetool',
+          detail: error.message,
+          state: BuildLogState.warning,
+        ),
+      );
+    } finally {
+      if (tempDirectory != null && tempDirectory.existsSync()) {
+        await tempDirectory.delete(recursive: true);
+      }
+    }
+  }
+
+  Stream<BuildEvent> _createTarGzBundle({
+    required String appName,
+    required Directory bundleDirectory,
+    required Directory outputDirectory,
+  }) async* {
+    final archivePath = _joinPath(
+      outputDirectory.path,
+      '${_slugify(appName)}-linux.tar.gz',
+    );
+    final archiveResult = await Process.run(
+      'tar',
+      [
+        '-czf',
+        archivePath,
+        '-C',
+        bundleDirectory.parent.path,
+        _basename(bundleDirectory.path),
+      ],
+      runInShell: true,
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+
+    if (archiveResult.exitCode == 0) {
+      yield BuildEvent.log(
+        BuildLogEntry(
+          title: 'Created Linux tar.gz',
+          detail: archivePath,
+          state: BuildLogState.success,
+        ),
+      );
+    } else {
+      yield BuildEvent.log(
+        BuildLogEntry(
+          title: 'tar.gz packaging failed',
+          detail: _shortProcessOutput(archiveResult),
+          state: BuildLogState.warning,
+        ),
+      );
+    }
+  }
+
+  Future<File> _resolveAppImageTool() async {
+    final systemTool = await _findExecutable('appimagetool');
+    if (systemTool != null) {
+      return systemTool;
+    }
+
+    final toolsDirectory = Directory(
+      _joinPath(_userCacheDirectory().path, 'pack_foundry/tools'),
+    );
+    await toolsDirectory.create(recursive: true);
+
+    final architecture = _appImageArchitecture();
+    final toolFile = File(
+      _joinPath(toolsDirectory.path, 'appimagetool-$architecture.AppImage'),
+    );
+    if (!toolFile.existsSync()) {
+      await _downloadFile(
+        Uri.parse('$_appImageToolBaseUrl/appimagetool-$architecture.AppImage'),
+        toolFile,
+      );
+    }
+    await _makeExecutable(toolFile);
+    return toolFile;
+  }
+
+  Future<File?> _findExecutable(String executableName) async {
+    final pathVariable = Platform.environment['PATH'];
+    if (pathVariable == null || pathVariable.isEmpty) {
+      return null;
+    }
+
+    for (final directory in pathVariable.split(':')) {
+      final candidate = File(_joinPath(directory, executableName));
+      if (candidate.existsSync()) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _downloadFile(Uri uri, File destination) async {
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(uri);
+      final response = await request.close();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(
+          'Download failed with HTTP ${response.statusCode}: $uri',
+        );
+      }
+
+      final sink = destination.openWrite();
+      await response.pipe(sink);
+      await sink.close();
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<File?> _findBundleExecutable(Directory bundleDirectory) async {
+    final files = await bundleDirectory
+        .list()
+        .where((entity) => entity is File)
+        .cast<File>()
+        .toList();
+    for (final file in files) {
+      final name = _basename(file.path);
+      if (name.contains('.') || name.endsWith('.so')) {
+        continue;
+      }
+      if (await _isExecutable(file)) {
+        return file;
+      }
+    }
+
+    final executableLikeFiles = files.where(
+      (file) => !_basename(file.path).contains('.'),
+    );
+    return executableLikeFiles.isEmpty ? null : executableLikeFiles.first;
+  }
+
+  Future<bool> _isExecutable(File file) async {
+    final stat = await file.stat();
+    return stat.mode & 0x49 != 0;
+  }
+
+  Future<void> _writeAppRun({
+    required Directory appDir,
+    required String executableName,
+  }) async {
+    final appRun = File(_joinPath(appDir.path, 'AppRun'));
+    await appRun.writeAsString('''#!/bin/sh
+HERE="\$(dirname "\$(readlink -f "\$0")")"
+exec "\$HERE/usr/bin/$executableName" "\$@"
+''');
+    await _makeExecutable(appRun);
+  }
+
+  Future<void> _writeDesktopFile({
+    required Directory appDir,
+    required String appName,
+    required String desktopId,
+  }) async {
+    final desktopFile = File(_joinPath(appDir.path, '$desktopId.desktop'));
+    await desktopFile.writeAsString('''[Desktop Entry]
+Type=Application
+Name=${_escapeDesktopValue(appName)}
+Exec=AppRun
+Icon=$desktopId
+Categories=Utility;
+Terminal=false
+''');
+  }
+
+  Future<void> _prepareAppIcon({
+    required Directory appDir,
+    required String desktopId,
+    required String? iconPath,
+  }) async {
+    final source = iconPath == null ? null : File(iconPath);
+    if (source != null && source.existsSync()) {
+      final extension = _extension(source.path).toLowerCase();
+      final normalizedExtension = extension == '.svg' ? '.svg' : '.png';
+      final iconFile = File(
+        _joinPath(appDir.path, '$desktopId$normalizedExtension'),
+      );
+      await source.copy(iconFile.path);
+      await source.copy(_joinPath(appDir.path, '.DirIcon'));
+      return;
+    }
+
+    final fallbackIcon = File(_joinPath(appDir.path, '$desktopId.svg'));
+    await fallbackIcon.writeAsString(
+      '''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" rx="48" fill="#0EA5A4"/>
+  <path d="M64 80h86a42 42 0 0 1 0 84H96v44H64V80Zm32 28v28h50a14 14 0 0 0 0-28H96Z" fill="#ffffff"/>
+</svg>
+''',
+    );
+    await fallbackIcon.copy(_joinPath(appDir.path, '.DirIcon'));
   }
 
   Future<ProcessResult> _runFlutterBuild(String projectPath) async {
@@ -277,15 +674,6 @@ class BuildService {
           'linux',
           '--release',
         ], 'Flutter executable was not found.');
-  }
-
-  Future<void> _deleteLinuxBuildCache(Directory projectDirectory) async {
-    final linuxBuildDirectory = Directory(
-      _joinPath(projectDirectory.path, 'build/linux'),
-    );
-    if (linuxBuildDirectory.existsSync()) {
-      await linuxBuildDirectory.delete(recursive: true);
-    }
   }
 
   Future<Directory?> _findLinuxBundle(Directory projectDirectory) async {
@@ -328,6 +716,27 @@ class BuildService {
     }
   }
 
+  Future<void> _makeExecutable(File file) async {
+    if (!Platform.isLinux && !Platform.isMacOS) {
+      return;
+    }
+    await Process.run('chmod', ['755', file.path]);
+  }
+
+  Directory _userCacheDirectory() {
+    final xdgCacheHome = Platform.environment['XDG_CACHE_HOME'];
+    if (xdgCacheHome != null && xdgCacheHome.isNotEmpty) {
+      return Directory(xdgCacheHome);
+    }
+
+    final home = Platform.environment['HOME'];
+    if (home != null && home.isNotEmpty) {
+      return Directory(_joinPath(home, '.cache'));
+    }
+
+    return Directory.systemTemp;
+  }
+
   String _shortProcessOutput(ProcessResult result) {
     final output = [
       result.stdout.toString().trim(),
@@ -346,6 +755,22 @@ class BuildService {
     return output.substring(output.length - maxLength);
   }
 
+  String _appImageArchitecture() {
+    final architecture = Process.runSync('uname', [
+      '-m',
+    ]).stdout.toString().trim();
+    return switch (architecture) {
+      'aarch64' => 'aarch64',
+      'arm64' => 'aarch64',
+      _ => 'x86_64',
+    };
+  }
+
+  String _safeFileName(String value) {
+    final fileName = value.trim().replaceAll(RegExp(r'[\\/\x00]+'), '-');
+    return fileName.isEmpty ? 'Flutter App' : fileName;
+  }
+
   String _slugify(String value) {
     final slug = value
         .trim()
@@ -353,6 +778,16 @@ class BuildService {
         .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
         .replaceAll(RegExp(r'^-+|-+$'), '');
     return slug.isEmpty ? 'flutter-app' : slug;
+  }
+
+  String _escapeDesktopValue(String value) {
+    return value.replaceAll('\n', ' ').replaceAll('\r', ' ');
+  }
+
+  String _extension(String path) {
+    final name = _basename(path);
+    final dotIndex = name.lastIndexOf('.');
+    return dotIndex == -1 ? '' : name.substring(dotIndex);
   }
 
   String _joinPath(String first, String second) {
@@ -373,6 +808,13 @@ class BuildService {
         : normalized;
     return trimmed.substring(trimmed.lastIndexOf('/') + 1);
   }
+}
+
+class _BuildWorkspace {
+  const _BuildWorkspace({required this.tempDirectory, required this.workspace});
+
+  final Directory tempDirectory;
+  final Directory workspace;
 }
 
 class BuildEvent {

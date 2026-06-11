@@ -1,43 +1,92 @@
 # PackFoundry
 
-PackFoundry is a Linux-first Flutter desktop application for preparing release builds and installers for Flutter projects.
+PackFoundry — Linux-first GUI-приложение на Flutter для сборки Flutter-проектов и упаковки релизных артефактов в установщики и переносимые пакеты.
 
-The goal is to replace repetitive release chores with a guided workspace:
+Главная идея проекта — убрать ручную рутину из релизной сборки: выбор проекта, проверку окружения, подготовку параметров приложения, запуск сборки, упаковку и просмотр понятного пошагового лога.
 
-- choose a Flutter project folder;
-- inspect available SDKs and packaging tools;
-- suggest tools that can be installed to unlock more targets;
-- configure app name, icon and window defaults;
-- select installer formats;
-- run the build pipeline with clear progress, logs and recovery hints.
+## Возможности
 
-## Current Prototype
+- выбор папки Flutter-проекта;
+- автоматическое чтение размера окна из Flutter desktop runner;
+- настройка имени приложения, иконки и размера окна;
+- сборка без изменения исходников выбранного проекта: PackFoundry создаёт временную копию и применяет параметры там;
+- выбор папки экспорта пакетов;
+- выбор типов пакетов для сборки;
+- пошаговый лог процесса сборки;
+- светлая, тёмная и системная тема;
+- русская и английская локализация с автоопределением языка системы;
+- приветственное окно с кратким обзором возможностей.
 
-The app currently includes a working Flutter UI prototype with:
+## Рабочие пространства
 
-- project selection placeholder;
-- application metadata fields;
-- installable target checklist;
-- toolchain status overview;
-- simulated build progress and log output.
+### Настройки
 
-## Planned Build Targets
+Здесь находятся настройки самой программы и список инструментов сборки. Этот раздел планируется развивать как центр установки и диагностики дополнительного ПО: Flutter SDK, Docker, Android SDK, AppImageTool, Inno Setup и других зависимостей.
 
-Initial Linux-hosted targets:
+### Проект
 
-- Linux AppImage;
-- Linux deb;
-- Linux rpm;
-- Linux tar.gz bundle;
-- Android APK/AAB when Android SDK is available;
-- Windows Inno Setup installer through Docker/Wine where practical.
+Здесь выбирается Flutter-проект и задаются параметры приложения:
 
-Longer-term targets may use native or remote builders for macOS, iOS and Windows-specific packaging.
+- каталог проекта;
+- название приложения;
+- ширина и высота окна;
+- иконка `.png` или `.svg`;
+- список пакетов, которые нужно собрать.
 
-## Development
+Размер окна подтягивается из runner-файлов проекта, если PackFoundry может их найти. При изменении размера в интерфейсе исходные файлы проекта не меняются: параметры применяются только во временной копии во время сборки.
+
+### Сборка
+
+Здесь выбирается папка экспорта, запускается сборка и отображается подробный процесс выполнения.
+
+## Поддерживаемые артефакты
+
+Сейчас в работе Linux-сборка. Уже реализовано:
+
+- Linux AppImage: создаётся настоящий `.AppImage` файл в папке экспорта;
+- Linux `tar.gz`: создаётся архив релизного bundle;
+- Linux `deb` и `rpm`: пока используют fallback-экспорт bundle, полноценная упаковка запланирована;
+- Windows, Android, macOS и iOS: отображаются как цели, требующие дополнительных инструментов, нативного хоста или будущего remote builder.
+
+## Как работает AppImage
+
+При выборе AppImage PackFoundry:
+
+1. создаёт временную копию проекта;
+2. применяет выбранный размер окна во временной копии;
+3. запускает `flutter build linux --release`;
+4. создаёт AppDir;
+5. добавляет `AppRun`, `.desktop` файл и иконку;
+6. запускает `appimagetool`;
+7. сохраняет итоговый файл `<Название приложения>.AppImage` в папку экспорта;
+8. удаляет временные файлы.
+
+Если `appimagetool` не найден в системе, PackFoundry пытается скачать его в кеш пользователя.
+
+## Разработка
 
 ```sh
+flutter pub get
 flutter analyze
 flutter test
 flutter run -d linux
 ```
+
+## Структура проекта
+
+```text
+lib/
+  core/
+    models/       # модели и состояние сборки
+    services/     # сервисы сборки и настроек
+  l10n/           # локализация
+  ui/
+    pages/        # страницы приложения
+    widgets/      # UI-компоненты
+```
+
+## Лицензия
+
+PackFoundry распространяется под лицензией GNU General Public License version 2.0 only — той же основной лицензией, под которой распространяется ядро Linux.
+
+См. файл [LICENSE](LICENSE).
