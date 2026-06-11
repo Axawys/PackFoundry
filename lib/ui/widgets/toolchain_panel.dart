@@ -3,12 +3,11 @@ import 'package:flutter/material.dart';
 import '../../core/models/tool_status.dart';
 import '../../l10n/app_localizations.dart';
 import 'section.dart';
-import 'status_chip.dart';
 
 class ToolchainPanel extends StatelessWidget {
-  const ToolchainPanel({required this.tools, super.key});
+  const ToolchainPanel({required this.groups, super.key});
 
-  final List<ToolStatus> tools;
+  final List<ToolchainGroup> groups;
 
   @override
   Widget build(BuildContext context) {
@@ -17,13 +16,115 @@ class ToolchainPanel extends StatelessWidget {
       icon: Icons.construction_outlined,
       child: Column(
         children: [
-          for (final tool in tools) ...[
-            _ToolRow(tool: tool),
-            if (tool != tools.last) const Divider(height: 20),
+          for (final group in groups) ...[
+            _ToolchainGroupCard(group: group),
+            if (group != groups.last) const SizedBox(height: 18),
           ],
         ],
       ),
     );
+  }
+}
+
+class _ToolchainGroupCard extends StatelessWidget {
+  const _ToolchainGroupCard({required this.group});
+
+  final ToolchainGroup group;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLow,
+        border: Border.all(color: colorScheme.outlineVariant, width: 1.5),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(7),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ColoredBox(
+                color: _statusColor(context, group.status),
+                child: const SizedBox(width: 5),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            _groupIcon(group.status),
+                            color: _statusColor(context, group.status),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  group.title,
+                                  style: Theme.of(context).textTheme.titleLarge
+                                      ?.copyWith(fontWeight: FontWeight.w800),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(group.subtitle),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (group.status != ToolAvailability.installed) ...[
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    l10n.installToolsSoon(group.title),
+                                  ),
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.download_outlined),
+                            label: Text(l10n.installMissingTools),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      Divider(height: 1, color: colorScheme.outlineVariant),
+                      const SizedBox(height: 12),
+                      for (final tool in group.tools) ...[
+                        _ToolRow(tool: tool),
+                        if (tool != group.tools.last) const Divider(height: 20),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  IconData _groupIcon(ToolAvailability status) {
+    return switch (status) {
+      ToolAvailability.installed => Icons.task_alt_outlined,
+      ToolAvailability.available => Icons.build_circle_outlined,
+      ToolAvailability.missing => Icons.report_problem_outlined,
+    };
   }
 }
 
@@ -34,12 +135,10 @@ class _ToolRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = context.l10n;
-
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(_toolIcon(tool.status), color: _toolColor(context, tool.status)),
+        Icon(_toolIcon(tool.status), color: _statusColor(context, tool.status)),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -52,11 +151,6 @@ class _ToolRow extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(width: 12),
-        StatusChip(
-          label: l10n.toolAvailabilityLabel(tool.status.name),
-          tone: tool.chipTone,
-        ),
       ],
     );
   }
@@ -68,12 +162,12 @@ class _ToolRow extends StatelessWidget {
       ToolAvailability.missing => Icons.error_outline,
     };
   }
+}
 
-  Color _toolColor(BuildContext context, ToolAvailability status) {
-    return switch (status) {
-      ToolAvailability.installed => const Color(0xFF16A34A),
-      ToolAvailability.available => Theme.of(context).colorScheme.primary,
-      ToolAvailability.missing => const Color(0xFFF59E0B),
-    };
-  }
+Color _statusColor(BuildContext context, ToolAvailability status) {
+  return switch (status) {
+    ToolAvailability.installed => const Color(0xFF16A34A),
+    ToolAvailability.available => Theme.of(context).colorScheme.primary,
+    ToolAvailability.missing => const Color(0xFFF59E0B),
+  };
 }

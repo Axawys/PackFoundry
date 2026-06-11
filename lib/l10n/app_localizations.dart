@@ -81,21 +81,115 @@ class AppLocalizations {
       : 'Default: build/pack_foundry';
   String get outputFolder => _isRu ? 'Папка экспорта' : 'Output folder';
 
+  String get debBuildGroupTitle => 'DEB';
+  String get rpmBuildGroupTitle => 'RPM';
+  String get appImageBuildGroupTitle => 'APPIMAGE';
+  String get windowsBuildGroupTitle => 'EXE';
+  String get installMissingTools =>
+      _isRu ? 'Установить недостающие инструменты' : 'Install missing tools';
+  String installToolsSoon(String target) {
+    return _isRu
+        ? 'Установка инструментов для $target будет добавлена в настройках.'
+        : 'Tool installation for $target will be added to settings.';
+  }
+
+  String debBuildNativeSubtitle(String distribution) {
+    return _isRu
+        ? 'Нативная deb-сборка для $distribution.'
+        : 'Native deb packaging for $distribution.';
+  }
+
+  String debBuildDockerSubtitle(String distribution) {
+    return _isRu
+        ? 'Deb-сборка через Debian Docker builder на $distribution.'
+        : 'Deb packaging through the Debian Docker builder on $distribution.';
+  }
+
+  String rpmBuildNativeSubtitle(String distribution) {
+    return _isRu
+        ? 'Нативная rpm-сборка для $distribution/Fedora-like окружения.'
+        : 'Native rpm packaging for $distribution/Fedora-like environments.';
+  }
+
+  String rpmBuildDockerSubtitle(String distribution) {
+    return _isRu
+        ? 'Будущая rpm-сборка через Fedora Docker builder на $distribution.'
+        : 'Future rpm packaging through the Fedora Docker builder on $distribution.';
+  }
+
+  String rpmBuildUnsupportedSubtitle(String distribution) {
+    return _isRu
+        ? '$distribution использует rpm, но пакеты Fedora/RHEL для неё пока не считаются совместимыми.'
+        : '$distribution uses rpm, but Fedora/RHEL packages are not treated as compatible yet.';
+  }
+
+  String get appImageBuildGroupSubtitle => _isRu
+      ? 'Сборка переносимого AppImage для Linux.'
+      : 'Build a portable AppImage for Linux.';
+  String get windowsBuildGroupSubtitle => _isRu
+      ? 'Сборка EXE требует Windows build host или будущий remote builder.'
+      : 'EXE builds require a Windows build host or a future remote builder.';
+  String get hostSystemToolName => _isRu ? 'Система хоста' : 'Host system';
+  String get hostSystemToolNote => _isRu
+      ? 'Определяет, какие пакеты можно собрать нативно без контейнера.'
+      : 'Defines which packages can be built natively without a container.';
+  String get hostRpmCompatibilityToolName =>
+      _isRu ? 'Совместимость rpm' : 'RPM compatibility';
+  String get hostRpmCompatibilityToolNote => _isRu
+      ? 'Host rpm-сборка пока доступна только для Fedora/RHEL-like систем.'
+      : 'Host rpm builds are currently enabled only for Fedora/RHEL-like systems.';
+
   String get flutterSdkNote => _isRu
       ? 'Нужен для сборки под любую платформу.'
       : 'Required for every build target.';
   String get linuxToolchainNote => _isRu
-      ? 'Собирает AppImage, deb, rpm и tar.gz на Linux-хостах.'
-      : 'Builds AppImage, deb, rpm and tar.gz on Linux hosts.';
+      ? 'Собирает Linux-пакеты на Linux-хостах.'
+      : 'Builds Linux packages on Linux hosts.';
+  String get hostLinuxToolchainNote => _isRu
+      ? 'Нужен для нативной сборки Linux bundle, AppImage и tar.gz.'
+      : 'Required for native Linux bundle, AppImage and tar.gz builds.';
+  String get appImageToolNote => _isRu
+      ? 'Упаковывает AppImage. Если отсутствует, PackFoundry может скачать его в кеш.'
+      : 'Packages AppImage. If missing, PackFoundry can download it to the cache.';
   String get dockerNote => _isRu
-      ? 'Добавляет воспроизводимые сборочные окружения и изоляцию.'
-      : 'Adds repeatable package builders and isolated build images.';
+      ? 'Нужен для сборки пакетов в контейнерах, например deb на Fedora.'
+      : 'Required for container builds, such as deb packaging on Fedora.';
+  String get dockerDebNote => _isRu
+      ? 'Нужен для deb-сборки на не-Debian системах.'
+      : 'Required for deb packaging on non-Debian systems.';
+  String get dockerRpmNote => _isRu
+      ? 'Будет нужен для rpm-сборки вне Fedora/RHEL-like систем.'
+      : 'Will be required for rpm packaging outside Fedora/RHEL-like systems.';
+  String get debianBuilderNote => _isRu
+      ? 'Образ скачивается Docker автоматически при первой deb-сборке.'
+      : 'Docker downloads this image automatically on the first deb build.';
+  String get rpmBuilderNote => _isRu
+      ? 'Будущий контейнер для сборки rpm вне Fedora/RHEL окружения.'
+      : 'Future container builder for rpm outside Fedora/RHEL environments.';
+  String get dpkgDebNote => _isRu
+      ? 'Создаёт deb-пакет на Debian/Ubuntu-like хостах.'
+      : 'Creates deb packages on Debian/Ubuntu-like hosts.';
+  String get rpmBuildToolNote => _isRu
+      ? 'Создаёт rpm-пакет на Fedora/RHEL-like хостах.'
+      : 'Creates rpm packages on Fedora/RHEL-like hosts.';
+  String get windowsBuildHostNote => _isRu
+      ? 'Flutter Windows build требует Windows toolchain; Wine сам по себе этого не заменяет.'
+      : 'Flutter Windows builds require the Windows toolchain; Wine alone does not replace it.';
+  String get wineNote => _isRu
+      ? 'Может пригодиться для запуска упаковщика, но не заменяет Windows build host.'
+      : 'May help run a packager, but does not replace a Windows build host.';
   String get innoSetupNote => _isRu
-      ? 'Может использоваться для Windows .exe установщиков через Wine.'
-      : 'Can be installed for Windows .exe installers through Wine.';
+      ? 'Упаковывает уже собранное Windows-приложение в установщик.'
+      : 'Packages an already-built Windows app into an installer.';
   String get androidSdkNote => _isRu
       ? 'Включает сборку APK и AAB артефактов.'
       : 'Enables APK and AAB release artifacts.';
+  String get flutterAndroidNote => _isRu
+      ? 'Flutter нужен для Android-сборки так же, как и для desktop.'
+      : 'Flutter is required for Android builds as well as desktop builds.';
+  String get javaNote => _isRu
+      ? 'Нужна Android Gradle toolchain для сборки APK/AAB.'
+      : 'Required by the Android Gradle toolchain for APK/AAB builds.';
 
   String get installers => _isRu ? 'Установщики' : 'Installers';
   String get toolchain => _isRu ? 'Инструменты' : 'Toolchain';
@@ -110,6 +204,15 @@ class AppLocalizations {
   String get building => _isRu ? 'Сборка...' : 'Building...';
   String get buildInstallers =>
       _isRu ? 'Собрать установщики' : 'Build installers';
+
+  String buildCapabilityLabel(String statusName) {
+    return switch (statusName) {
+      'installed' => _isRu ? 'Можно собирать' : 'Ready',
+      'available' => _isRu ? 'Нужны инструменты' : 'Needs tools',
+      'missing' => _isRu ? 'Недоступно' : 'Unavailable',
+      _ => statusName,
+    };
+  }
 
   String toolAvailabilityLabel(String statusName) {
     return switch (statusName) {

@@ -57,8 +57,11 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   ToolAvailability _flutterStatus = ToolAvailability.available;
   ToolAvailability _linuxToolchainStatus = ToolAvailability.available;
   ToolAvailability _dockerStatus = ToolAvailability.available;
+  ToolAvailability _appImageToolStatus = ToolAvailability.available;
+  ToolAvailability _debToolStatus = ToolAvailability.available;
+  ToolAvailability _rpmToolStatus = ToolAvailability.available;
+  ToolAvailability _wineStatus = ToolAvailability.available;
   ToolAvailability _innoSetupStatus = ToolAvailability.available;
-  ToolAvailability _androidSdkStatus = ToolAvailability.available;
 
   final List<BuildTarget> _targets = [
     BuildTarget(
@@ -118,8 +121,11 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       _toolchainService.commandAvailability('flutter', ['--version']),
       _linuxToolchainAvailable(),
       _toolchainService.commandAvailability('docker', ['--version']),
+      _toolchainService.commandAvailability('appimagetool', ['--version']),
+      _toolchainService.commandAvailability('dpkg-deb', ['--version']),
+      _toolchainService.commandAvailability('rpmbuild', ['--version']),
+      _toolchainService.commandAvailability('wine', ['--version']),
       _toolchainService.commandAvailability('iscc', ['--version']),
-      _androidSdkAvailable(),
     ]);
 
     if (!mounted) {
@@ -130,8 +136,11 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       _flutterStatus = results[0];
       _linuxToolchainStatus = results[1];
       _dockerStatus = results[2];
-      _innoSetupStatus = results[3];
-      _androidSdkStatus = results[4];
+      _appImageToolStatus = results[3];
+      _debToolStatus = results[4];
+      _rpmToolStatus = results[5];
+      _wineStatus = results[6];
+      _innoSetupStatus = results[7];
     });
   }
 
@@ -140,14 +149,6 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       const CommandCheck('clang', ['--version']),
       const CommandCheck('cmake', ['--version']),
       const CommandCheck('ninja', ['--version']),
-    ]);
-    return available ? ToolAvailability.installed : ToolAvailability.missing;
-  }
-
-  Future<ToolAvailability> _androidSdkAvailable() async {
-    final available = await _toolchainService.anyCommandAvailable([
-      const CommandCheck('sdkmanager', ['--version']),
-      const CommandCheck('adb', ['--version']),
     ]);
     return available ? ToolAvailability.installed : ToolAvailability.missing;
   }
@@ -199,39 +200,342 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     });
   }
 
-  List<ToolStatus> _tools(AppLocalizations l10n) {
+  List<ToolchainGroup> _toolGroups(AppLocalizations l10n) {
+    final distribution = _hostDistribution;
+    final debGroup = _debBuildGroup(l10n, distribution);
+    final rpmGroup = _rpmBuildGroup(l10n, distribution);
+    final nativePackageGroups =
+        distribution.family == _LinuxDistributionFamily.deb
+        ? [debGroup, rpmGroup]
+        : [rpmGroup, debGroup];
+
     return [
-      ToolStatus(
-        name: 'Flutter SDK',
-        command: 'flutter',
-        status: _flutterStatus,
-        note: l10n.flutterSdkNote,
-      ),
-      ToolStatus(
-        name: 'Linux toolchain',
-        command: 'clang, cmake, ninja, GTK',
-        status: _linuxToolchainStatus,
-        note: l10n.linuxToolchainNote,
-      ),
-      ToolStatus(
-        name: 'Docker',
-        command: 'docker',
-        status: _dockerStatus,
-        note: l10n.dockerNote,
-      ),
-      ToolStatus(
-        name: 'Inno Setup',
-        command: 'iscc.exe',
-        status: _innoSetupStatus,
-        note: l10n.innoSetupNote,
-      ),
-      ToolStatus(
-        name: 'Android SDK',
-        command: 'sdkmanager, gradle',
-        status: _androidSdkStatus,
-        note: l10n.androidSdkNote,
-      ),
+      ...nativePackageGroups,
+      _appImageBuildGroup(l10n),
+      _windowsBuildGroup(l10n),
     ];
+  }
+
+  ToolchainGroup _debBuildGroup(
+    AppLocalizations l10n,
+    _HostDistribution distribution,
+  ) {
+    final isNativeDeb = distribution.family == _LinuxDistributionFamily.deb;
+    final tools = isNativeDeb
+        ? [
+            _hostSystemTool(l10n, distribution),
+            _flutterTool(l10n),
+            _linuxToolchainTool(l10n),
+            ToolStatus(
+              name: 'dpkg-deb',
+              command: 'dpkg-deb',
+              status: _debToolStatus,
+              note: l10n.dpkgDebNote,
+            ),
+          ]
+        : [
+            ToolStatus(
+              name: 'Docker',
+              command: 'docker',
+              status: _dockerStatus,
+              note: l10n.dockerDebNote,
+            ),
+            ToolStatus(
+              name: 'Debian builder',
+              command: 'debian:bookworm',
+              status: _dockerStatus == ToolAvailability.installed
+                  ? ToolAvailability.installed
+                  : ToolAvailability.available,
+              note: l10n.debianBuilderNote,
+            ),
+          ];
+
+    return ToolchainGroup(
+      title: l10n.debBuildGroupTitle,
+      subtitle: isNativeDeb
+          ? l10n.debBuildNativeSubtitle(distribution.name)
+          : l10n.debBuildDockerSubtitle(distribution.name),
+      status: isNativeDeb ? _nativeDebBuildStatus : _dockerDebBuildStatus,
+      tools: tools,
+    );
+  }
+
+  ToolchainGroup _rpmBuildGroup(
+    AppLocalizations l10n,
+    _HostDistribution distribution,
+  ) {
+    final isNativeRpm = distribution.family == _LinuxDistributionFamily.rpm;
+    final unsupportedRpm =
+        distribution.family == _LinuxDistributionFamily.unsupportedRpm;
+
+    return ToolchainGroup(
+      title: l10n.rpmBuildGroupTitle,
+      subtitle: unsupportedRpm
+          ? l10n.rpmBuildUnsupportedSubtitle(distribution.name)
+          : isNativeRpm
+          ? l10n.rpmBuildNativeSubtitle(distribution.name)
+          : l10n.rpmBuildDockerSubtitle(distribution.name),
+      status: unsupportedRpm
+          ? ToolAvailability.missing
+          : isNativeRpm
+          ? _nativeRpmBuildStatus
+          : _dockerRpmBuildStatus,
+      tools: [
+        if (isNativeRpm) ...[
+          _hostSystemTool(l10n, distribution),
+          _flutterTool(l10n),
+          _linuxToolchainTool(l10n),
+          ToolStatus(
+            name: 'rpmbuild',
+            command: 'rpmbuild',
+            status: _rpmToolStatus,
+            note: l10n.rpmBuildToolNote,
+          ),
+        ] else if (unsupportedRpm) ...[
+          _hostSystemTool(l10n, distribution),
+          ToolStatus(
+            name: l10n.hostRpmCompatibilityToolName,
+            command: distribution.id,
+            status: ToolAvailability.missing,
+            note: l10n.hostRpmCompatibilityToolNote,
+          ),
+        ] else ...[
+          ToolStatus(
+            name: 'Docker',
+            command: 'docker',
+            status: _dockerStatus,
+            note: l10n.dockerRpmNote,
+          ),
+          ToolStatus(
+            name: 'Fedora builder',
+            command: 'fedora container',
+            status: ToolAvailability.available,
+            note: l10n.rpmBuilderNote,
+          ),
+        ],
+      ],
+    );
+  }
+
+  ToolchainGroup _appImageBuildGroup(AppLocalizations l10n) {
+    return ToolchainGroup(
+      title: l10n.appImageBuildGroupTitle,
+      subtitle: l10n.appImageBuildGroupSubtitle,
+      status: _appImageBuildStatus,
+      tools: [
+        _flutterTool(l10n),
+        _linuxToolchainTool(l10n),
+        ToolStatus(
+          name: 'AppImageTool',
+          command: 'appimagetool',
+          status: _appImageToolStatus,
+          note: l10n.appImageToolNote,
+        ),
+      ],
+    );
+  }
+
+  ToolchainGroup _windowsBuildGroup(AppLocalizations l10n) {
+    return ToolchainGroup(
+      title: l10n.windowsBuildGroupTitle,
+      subtitle: l10n.windowsBuildGroupSubtitle,
+      status: ToolAvailability.missing,
+      tools: [
+        ToolStatus(
+          name: 'Windows build host',
+          command: 'windows runner toolchain',
+          status: ToolAvailability.missing,
+          note: l10n.windowsBuildHostNote,
+        ),
+        ToolStatus(
+          name: 'Wine',
+          command: 'wine',
+          status: _wineStatus,
+          note: l10n.wineNote,
+        ),
+        ToolStatus(
+          name: 'Inno Setup',
+          command: 'iscc.exe',
+          status: _innoSetupStatus,
+          note: l10n.innoSetupNote,
+        ),
+      ],
+    );
+  }
+
+  ToolStatus _hostSystemTool(
+    AppLocalizations l10n,
+    _HostDistribution distribution,
+  ) {
+    return ToolStatus(
+      name: l10n.hostSystemToolName,
+      command: distribution.id,
+      status: distribution.family == _LinuxDistributionFamily.unknown
+          ? ToolAvailability.missing
+          : ToolAvailability.installed,
+      note: l10n.hostSystemToolNote,
+    );
+  }
+
+  ToolStatus _flutterTool(AppLocalizations l10n) {
+    return ToolStatus(
+      name: 'Flutter SDK',
+      command: 'flutter',
+      status: _flutterStatus,
+      note: l10n.flutterSdkNote,
+    );
+  }
+
+  ToolStatus _linuxToolchainTool(AppLocalizations l10n) {
+    return ToolStatus(
+      name: 'Linux toolchain',
+      command: 'clang, cmake, ninja, GTK',
+      status: _linuxToolchainStatus,
+      note: l10n.hostLinuxToolchainNote,
+    );
+  }
+
+  ToolAvailability get _nativeDebBuildStatus {
+    if (_flutterStatus == ToolAvailability.installed &&
+        _linuxToolchainStatus == ToolAvailability.installed &&
+        _debToolStatus == ToolAvailability.installed) {
+      return ToolAvailability.installed;
+    }
+    return ToolAvailability.available;
+  }
+
+  ToolAvailability get _dockerDebBuildStatus {
+    return _dockerStatus == ToolAvailability.installed
+        ? ToolAvailability.installed
+        : ToolAvailability.available;
+  }
+
+  ToolAvailability get _nativeRpmBuildStatus {
+    if (_flutterStatus == ToolAvailability.installed &&
+        _linuxToolchainStatus == ToolAvailability.installed &&
+        _rpmToolStatus == ToolAvailability.installed) {
+      return ToolAvailability.installed;
+    }
+    return ToolAvailability.available;
+  }
+
+  ToolAvailability get _dockerRpmBuildStatus {
+    return _dockerStatus == ToolAvailability.installed
+        ? ToolAvailability.available
+        : ToolAvailability.available;
+  }
+
+  ToolAvailability get _appImageBuildStatus {
+    if (_flutterStatus == ToolAvailability.installed &&
+        _linuxToolchainStatus == ToolAvailability.installed &&
+        _appImageToolStatus == ToolAvailability.installed) {
+      return ToolAvailability.installed;
+    }
+    return ToolAvailability.available;
+  }
+
+  _HostDistribution get _hostDistribution {
+    if (!Platform.isLinux) {
+      return _HostDistribution(
+        id: Platform.operatingSystem,
+        name: _hostSystemLabel(),
+        family: _LinuxDistributionFamily.unknown,
+      );
+    }
+
+    final values = _readOsRelease();
+    final id = values['ID']?.toLowerCase() ?? 'linux';
+    final idLike = values['ID_LIKE']?.toLowerCase() ?? '';
+    final name = values['NAME'] ?? _hostSystemLabel();
+    final family = _detectDistributionFamily(id, idLike);
+    return _HostDistribution(id: id, name: name, family: family);
+  }
+
+  _LinuxDistributionFamily _detectDistributionFamily(String id, String idLike) {
+    final rpmIds = {'fedora', 'rhel', 'centos', 'rocky', 'almalinux'};
+    final unsupportedRpmIds = {
+      'opensuse',
+      'opensuse-leap',
+      'opensuse-tumbleweed',
+      'sles',
+      'alt',
+      'altlinux',
+    };
+    final debIds = {
+      'debian',
+      'ubuntu',
+      'linuxmint',
+      'pop',
+      'elementary',
+      'zorin',
+    };
+    final tokens = {
+      id,
+      ...idLike.split(RegExp(r'\s+')).where((part) => part.isNotEmpty),
+    };
+
+    if (tokens.any(unsupportedRpmIds.contains)) {
+      return _LinuxDistributionFamily.unsupportedRpm;
+    }
+    if (tokens.any(debIds.contains)) {
+      return _LinuxDistributionFamily.deb;
+    }
+    if (tokens.any(rpmIds.contains)) {
+      return _LinuxDistributionFamily.rpm;
+    }
+    return _LinuxDistributionFamily.unknown;
+  }
+
+  Map<String, String> _readOsRelease() {
+    final file = File('/etc/os-release');
+    if (!file.existsSync()) {
+      return const {};
+    }
+
+    final values = <String, String>{};
+    for (final line in file.readAsLinesSync()) {
+      final separator = line.indexOf('=');
+      if (separator <= 0) {
+        continue;
+      }
+      final key = line.substring(0, separator);
+      var value = line.substring(separator + 1).trim();
+      if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+        value = value.substring(1, value.length - 1);
+      }
+      values[key] = value;
+    }
+    return values;
+  }
+
+  String _hostSystemLabel() {
+    final system = switch (Platform.operatingSystem) {
+      'linux' => 'Linux',
+      'windows' => 'Windows',
+      'macos' => 'macOS',
+      'android' => 'Android',
+      'ios' => 'iOS',
+      final value => value,
+    };
+    final architecture = _hostArchitecture();
+    return architecture.isEmpty ? system : '$system $architecture';
+  }
+
+  String _hostArchitecture() {
+    if (!Platform.isLinux && !Platform.isMacOS) {
+      return '';
+    }
+
+    try {
+      final result = Process.runSync('uname', ['-m']);
+      final architecture = result.stdout.toString().trim();
+      if (architecture.isNotEmpty) {
+        return architecture;
+      }
+    } on Object {
+      // The UI can still show the OS if architecture probing is unavailable.
+    }
+    return '';
   }
 
   @override
@@ -412,7 +716,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final tools = _tools(l10n);
+    final toolGroups = _toolGroups(l10n);
     final selectedTargets = _targets.where((target) => target.selected).length;
     final workspaces = [
       _Workspace(
@@ -447,7 +751,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
             final content = _WorkspaceContent(
               index: _workspaceIndex,
               themeMode: widget.themeMode,
-              tools: tools,
+              toolGroups: toolGroups,
               projectPath: _projectPath,
               iconPath: _iconPath,
               outputPath: _outputPath,
@@ -527,6 +831,20 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   }
 }
 
+class _HostDistribution {
+  const _HostDistribution({
+    required this.id,
+    required this.name,
+    required this.family,
+  });
+
+  final String id;
+  final String name;
+  final _LinuxDistributionFamily family;
+}
+
+enum _LinuxDistributionFamily { deb, rpm, unsupportedRpm, unknown }
+
 class _WindowSize {
   const _WindowSize({required this.width, required this.height});
 
@@ -538,7 +856,7 @@ class _WorkspaceContent extends StatelessWidget {
   const _WorkspaceContent({
     required this.index,
     required this.themeMode,
-    required this.tools,
+    required this.toolGroups,
     required this.projectPath,
     required this.iconPath,
     required this.outputPath,
@@ -560,7 +878,7 @@ class _WorkspaceContent extends StatelessWidget {
 
   final int index;
   final ThemeMode themeMode;
-  final List<ToolStatus> tools;
+  final List<ToolchainGroup> toolGroups;
   final String? projectPath;
   final String? iconPath;
   final String? outputPath;
@@ -585,7 +903,7 @@ class _WorkspaceContent extends StatelessWidget {
       0 => [
         ThemeSettingsPanel(themeMode: themeMode, onChanged: onThemeModeChanged),
         const SizedBox(height: 16),
-        ToolchainPanel(tools: tools),
+        ToolchainPanel(groups: toolGroups),
       ],
       1 => [
         ProjectPanel(
