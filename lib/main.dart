@@ -11,7 +11,9 @@ void main() {
 }
 
 class PackFoundryApp extends StatefulWidget {
-  const PackFoundryApp({super.key});
+  const PackFoundryApp({super.key, this.enableToolchainDiagnostics = true});
+
+  final bool enableToolchainDiagnostics;
 
   @override
   State<PackFoundryApp> createState() => _PackFoundryAppState();
@@ -80,6 +82,7 @@ class _PackFoundryAppState extends State<PackFoundryApp> {
         showWelcome: _settingsLoaded && _showWelcome,
         onThemeModeChanged: _setThemeMode,
         onWelcomeCompleted: _completeWelcome,
+        enableToolchainDiagnostics: widget.enableToolchainDiagnostics,
       ),
     );
   }

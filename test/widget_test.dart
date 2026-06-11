@@ -10,7 +10,9 @@ void main() {
   });
 
   testWidgets('shows PackFoundry workspaces', (tester) async {
-    await tester.pumpWidget(const PackFoundryApp());
+    await tester.pumpWidget(
+      const PackFoundryApp(enableToolchainDiagnostics: false),
+    );
     await tester.pump();
     await tester.pump();
 
@@ -38,7 +40,9 @@ void main() {
   testWidgets('shows welcome dialog by default', (tester) async {
     SharedPreferences.setMockInitialValues({});
 
-    await tester.pumpWidget(const PackFoundryApp());
+    await tester.pumpWidget(
+      const PackFoundryApp(enableToolchainDiagnostics: false),
+    );
     await tester.pump();
     await tester.pump();
 
@@ -51,7 +55,9 @@ void main() {
   testWidgets('applies welcome theme selection immediately', (tester) async {
     SharedPreferences.setMockInitialValues({});
 
-    await tester.pumpWidget(const PackFoundryApp());
+    await tester.pumpWidget(
+      const PackFoundryApp(enableToolchainDiagnostics: false),
+    );
     await tester.pump();
     await tester.pump();
 
@@ -73,7 +79,9 @@ void main() {
     tester.binding.platformDispatcher.localesTestValue = const [Locale('ru')];
     addTearDown(tester.binding.platformDispatcher.clearLocalesTestValue);
 
-    await tester.pumpWidget(const PackFoundryApp());
+    await tester.pumpWidget(
+      const PackFoundryApp(enableToolchainDiagnostics: false),
+    );
     await tester.pump();
     await tester.pump();
 

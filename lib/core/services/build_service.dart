@@ -9,6 +9,7 @@ import '../models/build_target.dart';
 class BuildService {
   static const _appImageToolBaseUrl =
       'https://github.com/AppImage/AppImageKit/releases/download/continuous';
+  static const _debianDockerImage = 'debian:bookworm';
 
   Stream<BuildEvent> build(BuildConfiguration configuration) async* {
     final selectedTargets = configuration.targets
@@ -111,55 +112,81 @@ class BuildService {
       buildTempDirectory = buildWorkspaceInfo.tempDirectory;
       final workspace = buildWorkspaceInfo.workspace;
 
-      yield const BuildEvent.progress(15);
-      yield const BuildEvent.log(
-        BuildLogEntry(
-          title: 'Running Flutter release build',
-          detail: 'flutter build linux --release',
-          state: BuildLogState.running,
-        ),
-      );
+      final debTargets = linuxTargets
+          .where((target) => target.artifact == 'deb package')
+          .toList();
+      final localLinuxTargets = linuxTargets
+          .where((target) => target.artifact != 'deb package')
+          .toList();
 
-      final buildResult = await _runFlutterBuild(workspace.path);
-      if (buildResult.exitCode != 0) {
-        yield BuildEvent.log(
-          BuildLogEntry(
-            title: 'Flutter build failed',
-            detail: _shortProcessOutput(buildResult),
-            state: BuildLogState.warning,
-          ),
-        );
-        return;
-      }
-
-      yield const BuildEvent.progress(55);
-      yield BuildEvent.log(
-        BuildLogEntry(
-          title: 'Flutter build completed',
-          detail: _shortProcessOutput(buildResult),
-          state: BuildLogState.success,
-        ),
-      );
-
-      final bundleDirectory = await _findLinuxBundle(workspace);
-      if (bundleDirectory == null) {
+      if (localLinuxTargets.isNotEmpty) {
+        yield const BuildEvent.progress(15);
         yield const BuildEvent.log(
           BuildLogEntry(
-            title: 'Linux bundle not found',
-            detail:
-                'Expected build/linux/<arch>/release/bundle after Flutter build.',
-            state: BuildLogState.warning,
+            title: 'Running Flutter release build',
+            detail: 'flutter build linux --release',
+            state: BuildLogState.running,
           ),
         );
-        return;
+
+        final buildResult = await _runFlutterBuild(workspace.path);
+        if (buildResult.exitCode != 0) {
+          yield BuildEvent.log(
+            BuildLogEntry(
+              title: 'Flutter build failed',
+              detail: _shortProcessOutput(buildResult),
+              state: BuildLogState.warning,
+            ),
+          );
+          return;
+        }
+
+        yield const BuildEvent.progress(55);
+        yield BuildEvent.log(
+          BuildLogEntry(
+            title: 'Flutter build completed',
+            detail: _shortProcessOutput(buildResult),
+            state: BuildLogState.success,
+          ),
+        );
+
+        final bundleDirectory = await _findLinuxBundle(workspace);
+        if (bundleDirectory == null) {
+          yield const BuildEvent.log(
+            BuildLogEntry(
+              title: 'Linux bundle not found',
+              detail:
+                  'Expected build/linux/<arch>/release/bundle after Flutter build.',
+              state: BuildLogState.warning,
+            ),
+          );
+          return;
+        }
+
+        yield* _exportLinuxTargets(
+          configuration: configuration,
+          targets: localLinuxTargets,
+          bundleDirectory: bundleDirectory,
+          outputDirectory: outputDirectory,
+        );
       }
 
-      yield* _exportLinuxTargets(
-        configuration: configuration,
-        targets: linuxTargets,
-        bundleDirectory: bundleDirectory,
-        outputDirectory: outputDirectory,
-      );
+      if (debTargets.isNotEmpty) {
+        yield const BuildEvent.progress(60);
+        yield const BuildEvent.log(
+          BuildLogEntry(
+            title: 'Packaging deb in Docker',
+            detail:
+                'Using $_debianDockerImage to build and package without depending on the host distro.',
+            state: BuildLogState.running,
+          ),
+        );
+        yield* _createDebPackageWithDocker(
+          configuration: configuration,
+          workspace: workspace,
+          outputDirectory: outputDirectory,
+        );
+      }
 
       yield const BuildEvent.progress(100);
       yield BuildEvent.log(
@@ -503,6 +530,236 @@ class BuildService {
     }
   }
 
+  Stream<BuildEvent> _createDebPackageWithDocker({
+    required BuildConfiguration configuration,
+    required Directory workspace,
+    required Directory outputDirectory,
+  }) async* {
+    final docker = await _findExecutable('docker');
+    if (docker == null) {
+      yield const BuildEvent.log(
+        BuildLogEntry(
+          title: 'deb packaging failed',
+          detail: 'Docker was not found in PATH.',
+          state: BuildLogState.warning,
+        ),
+      );
+      return;
+    }
+
+    final appName = configuration.appName.trim().isEmpty
+        ? 'Flutter App'
+        : configuration.appName.trim();
+    final packageName = _slugify(appName);
+    final version = await _readDebianVersion(workspace);
+    final iconPath = await _copyIconIntoWorkspace(
+      workspace: workspace,
+      iconPath: configuration.iconPath,
+    );
+    final outputFileName = '${_safeFileName(appName)}_$version';
+    final dockerArguments = [
+      'run',
+      '--rm',
+      '-v',
+      '${workspace.path}:/work',
+      '-v',
+      '${outputDirectory.path}:/out',
+      '-e',
+      'PACKFOUNDRY_APP_NAME=${_dockerEnvValue(appName)}',
+      '-e',
+      'PACKFOUNDRY_PACKAGE_NAME=$packageName',
+      '-e',
+      'PACKFOUNDRY_VERSION=$version',
+      '-e',
+      'PACKFOUNDRY_OUTPUT_BASENAME=${_dockerEnvValue(outputFileName)}',
+      if (iconPath != null) ...[
+        '-e',
+        'PACKFOUNDRY_ICON_PATH=${_dockerEnvValue(iconPath)}',
+      ],
+      _debianDockerImage,
+      'bash',
+      '-lc',
+      _debDockerScript,
+    ];
+
+    yield BuildEvent.log(
+      BuildLogEntry(
+        title: 'Starting Debian container',
+        detail: 'docker run --rm $_debianDockerImage',
+        state: BuildLogState.running,
+      ),
+    );
+
+    final process = await Process.start(
+      docker.path,
+      dockerArguments,
+      runInShell: false,
+    );
+    final outputTail = _OutputTail(maxLines: 80);
+    final outputLines = _processLines(process);
+    String? debPath;
+
+    await for (final line in outputLines) {
+      outputTail.add(line.line);
+      final debStep = _parseDebProgressLine(line.line);
+      if (debStep == null) {
+        continue;
+      }
+
+      yield BuildEvent.progress(debStep.progress);
+      yield BuildEvent.log(
+        BuildLogEntry(
+          title: debStep.title,
+          detail: debStep.detail,
+          state: BuildLogState.running,
+        ),
+      );
+      if (debStep.artifactPath != null) {
+        debPath = debStep.artifactPath;
+      }
+    }
+
+    final exitCode = await process.exitCode;
+    if (exitCode != 0) {
+      yield BuildEvent.log(
+        BuildLogEntry(
+          title: 'deb packaging failed',
+          detail: outputTail.text.isEmpty
+              ? 'Docker exited with code $exitCode.'
+              : outputTail.text,
+          state: BuildLogState.warning,
+        ),
+      );
+      return;
+    }
+
+    yield BuildEvent.progress(95);
+    yield BuildEvent.log(
+      BuildLogEntry(
+        title: 'Created deb package',
+        detail: debPath ?? '${_safeFileName(appName)}_$version.deb',
+        state: BuildLogState.success,
+      ),
+    );
+  }
+
+  static const _debDockerScript = r'''
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+pf_step() {
+  printf 'PACKFOUNDRY_STEP|%s|%s|%s\n' "$1" "$2" "$3"
+}
+
+pf_step 62 "Updating Debian package index" "apt-get update inside debian:bookworm."
+apt-get update
+pf_step 66 "Installing Linux build dependencies" "clang, cmake, ninja, GTK and dpkg tools."
+apt-get install -y --no-install-recommends \
+  ca-certificates \
+  clang \
+  cmake \
+  curl \
+  dpkg-dev \
+  file \
+  git \
+  libgtk-3-dev \
+  liblzma-dev \
+  libstdc++-12-dev \
+  ninja-build \
+  pkg-config \
+  unzip \
+  xz-utils \
+  zip
+
+pf_step 70 "Downloading Flutter SDK" "Cloning the stable Flutter channel inside Debian."
+rm -rf /opt/flutter
+git clone --depth 1 --branch stable https://github.com/flutter/flutter.git /opt/flutter
+export PATH=/opt/flutter/bin:$PATH
+git config --global --add safe.directory /opt/flutter
+git config --global --add safe.directory /work
+
+pf_step 74 "Configuring Flutter Linux desktop" "Enabling Linux desktop support in the container."
+flutter config --enable-linux-desktop
+cd /work
+rm -rf build/linux
+pf_step 78 "Resolving Flutter dependencies" "Running flutter pub get in the copied project."
+flutter pub get
+pf_step 82 "Building Linux release bundle" "Running flutter build linux --release inside Debian."
+flutter build linux --release
+
+bundle="$(find build/linux -type d -path '*/release/bundle' | head -n 1)"
+if [ -z "$bundle" ]; then
+  echo "Flutter Linux bundle was not found" >&2
+  exit 30
+fi
+
+pf_step 86 "Preparing Debian package layout" "Creating DEBIAN/control, desktop entry and icon directories."
+arch="$(dpkg --print-architecture)"
+package_root="/tmp/${PACKFOUNDRY_PACKAGE_NAME}_${PACKFOUNDRY_VERSION}_${arch}"
+rm -rf "$package_root"
+mkdir -p \
+  "$package_root/DEBIAN" \
+  "$package_root/opt/$PACKFOUNDRY_PACKAGE_NAME" \
+  "$package_root/usr/share/applications" \
+  "$package_root/usr/share/icons/hicolor/scalable/apps" \
+  "$package_root/usr/share/icons/hicolor/256x256/apps"
+
+cp -a "$bundle/." "$package_root/opt/$PACKFOUNDRY_PACKAGE_NAME/"
+executable="$(find "$package_root/opt/$PACKFOUNDRY_PACKAGE_NAME" -maxdepth 1 -type f -perm /111 ! -name '*.so' | head -n 1)"
+if [ -z "$executable" ]; then
+  echo "Bundle executable was not found" >&2
+  exit 31
+fi
+chmod 755 "$executable"
+
+cat > "$package_root/DEBIAN/control" <<EOF
+Package: $PACKFOUNDRY_PACKAGE_NAME
+Version: $PACKFOUNDRY_VERSION
+Section: utils
+Priority: optional
+Architecture: $arch
+Maintainer: PackFoundry <packfoundry@localhost>
+Depends: libgtk-3-0, libstdc++6, liblzma5
+Description: $PACKFOUNDRY_APP_NAME
+ Packaged with PackFoundry.
+EOF
+
+cat > "$package_root/usr/share/applications/$PACKFOUNDRY_PACKAGE_NAME.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$PACKFOUNDRY_APP_NAME
+Exec=/opt/$PACKFOUNDRY_PACKAGE_NAME/$(basename "$executable")
+Icon=$PACKFOUNDRY_PACKAGE_NAME
+Categories=Utility;
+Terminal=false
+EOF
+
+if [ -n "${PACKFOUNDRY_ICON_PATH:-}" ] && [ -f "/work/$PACKFOUNDRY_ICON_PATH" ]; then
+  case "$PACKFOUNDRY_ICON_PATH" in
+    *.svg|*.SVG)
+      cp "/work/$PACKFOUNDRY_ICON_PATH" "$package_root/usr/share/icons/hicolor/scalable/apps/$PACKFOUNDRY_PACKAGE_NAME.svg"
+      ;;
+    *)
+      cp "/work/$PACKFOUNDRY_ICON_PATH" "$package_root/usr/share/icons/hicolor/256x256/apps/$PACKFOUNDRY_PACKAGE_NAME.png"
+      ;;
+  esac
+else
+  cat > "$package_root/usr/share/icons/hicolor/scalable/apps/$PACKFOUNDRY_PACKAGE_NAME.svg" <<EOF
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" rx="48" fill="#0EA5A4"/>
+  <path d="M64 80h86a42 42 0 0 1 0 84H96v44H64V80Zm32 28v28h50a14 14 0 0 0 0-28H96Z" fill="#ffffff"/>
+</svg>
+EOF
+fi
+
+pf_step 91 "Building .deb archive" "Running dpkg-deb --build."
+deb_path="/out/${PACKFOUNDRY_OUTPUT_BASENAME}_${arch}.deb"
+rm -f "$deb_path"
+dpkg-deb --build --root-owner-group "$package_root" "$deb_path"
+pf_step 94 "Debian package exported" "$deb_path"
+echo "$deb_path"
+''';
+
   Future<File> _resolveAppImageTool() async {
     final systemTool = await _findExecutable('appimagetool');
     if (systemTool != null) {
@@ -526,6 +783,118 @@ class BuildService {
     }
     await _makeExecutable(toolFile);
     return toolFile;
+  }
+
+  Stream<_ProcessLine> _processLines(Process process) {
+    final controller = StreamController<_ProcessLine>();
+    var openStreams = 2;
+
+    void closeWhenReady() {
+      openStreams -= 1;
+      if (openStreams == 0) {
+        unawaited(controller.close());
+      }
+    }
+
+    void addLine(String source, String line) {
+      if (!controller.isClosed) {
+        controller.add(_ProcessLine(source: source, line: line));
+      }
+    }
+
+    process.stdout
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen(
+          (line) => addLine('stdout', line),
+          onError: controller.addError,
+          onDone: closeWhenReady,
+          cancelOnError: false,
+        );
+    process.stderr
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen(
+          (line) => addLine('stderr', line),
+          onError: controller.addError,
+          onDone: closeWhenReady,
+          cancelOnError: false,
+        );
+
+    return controller.stream;
+  }
+
+  _DebProgressStep? _parseDebProgressLine(String line) {
+    if (!line.startsWith('PACKFOUNDRY_STEP|')) {
+      return null;
+    }
+
+    final parts = line.split('|');
+    if (parts.length < 4) {
+      return null;
+    }
+
+    final progress = int.tryParse(parts[1]);
+    if (progress == null) {
+      return null;
+    }
+
+    final title = parts[2].trim();
+    final detail = parts.sublist(3).join('|').trim();
+    return _DebProgressStep(
+      progress: progress.clamp(0, 100),
+      title: title.isEmpty ? 'Packaging deb' : title,
+      detail: detail,
+      artifactPath: progress >= 94 ? detail : null,
+    );
+  }
+
+  Future<String> _readDebianVersion(Directory workspace) async {
+    final pubspec = File(_joinPath(workspace.path, 'pubspec.yaml'));
+    if (!pubspec.existsSync()) {
+      return '1.0.0';
+    }
+
+    final match = RegExp(
+      r'^version:\s*([^\s#]+)',
+      multiLine: true,
+    ).firstMatch(await pubspec.readAsString());
+    final version = match?.group(1)?.trim();
+    if (version == null || version.isEmpty) {
+      return '1.0.0';
+    }
+
+    final debianVersion = version.replaceAll(RegExp(r'[^A-Za-z0-9.+:~_-]'), '');
+    return debianVersion.isEmpty ? '1.0.0' : debianVersion;
+  }
+
+  Future<String?> _copyIconIntoWorkspace({
+    required Directory workspace,
+    required String? iconPath,
+  }) async {
+    if (iconPath == null || iconPath.isEmpty) {
+      return null;
+    }
+
+    final source = File(iconPath);
+    if (!source.existsSync()) {
+      return null;
+    }
+
+    final extension = _extension(source.path).toLowerCase() == '.svg'
+        ? '.svg'
+        : '.png';
+    final assetsDirectory = Directory(
+      _joinPath(workspace.path, '.pack_foundry'),
+    );
+    await assetsDirectory.create(recursive: true);
+    final destination = File(_joinPath(assetsDirectory.path, 'icon$extension'));
+    await source.copy(destination.path);
+    return '.pack_foundry/icon$extension';
+  }
+
+  String _dockerEnvValue(String value) {
+    return value.replaceAll('\n', ' ').replaceAll('\r', ' ');
   }
 
   Future<File?> _findExecutable(String executableName) async {
@@ -808,6 +1177,46 @@ Terminal=false
         : normalized;
     return trimmed.substring(trimmed.lastIndexOf('/') + 1);
   }
+}
+
+class _ProcessLine {
+  const _ProcessLine({required this.source, required this.line});
+
+  final String source;
+  final String line;
+}
+
+class _DebProgressStep {
+  const _DebProgressStep({
+    required this.progress,
+    required this.title,
+    required this.detail,
+    required this.artifactPath,
+  });
+
+  final int progress;
+  final String title;
+  final String detail;
+  final String? artifactPath;
+}
+
+class _OutputTail {
+  _OutputTail({required this.maxLines});
+
+  final int maxLines;
+  final List<String> _lines = [];
+
+  void add(String line) {
+    if (line.trim().isEmpty) {
+      return;
+    }
+    _lines.add(line);
+    if (_lines.length > maxLines) {
+      _lines.removeAt(0);
+    }
+  }
+
+  String get text => _lines.join('\n');
 }
 
 class _BuildWorkspace {

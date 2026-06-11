@@ -8,6 +8,7 @@ import '../../core/models/build_log_entry.dart';
 import '../../core/models/build_target.dart';
 import '../../core/models/tool_status.dart';
 import '../../core/services/build_service.dart';
+import '../../core/services/toolchain_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../widgets/app_settings_panel.dart';
 import '../widgets/build_destination_panel.dart';
@@ -24,6 +25,7 @@ class PackFoundryHomePage extends StatefulWidget {
     required this.showWelcome,
     required this.onThemeModeChanged,
     required this.onWelcomeCompleted,
+    required this.enableToolchainDiagnostics,
     super.key,
   });
 
@@ -31,6 +33,7 @@ class PackFoundryHomePage extends StatefulWidget {
   final bool showWelcome;
   final ValueChanged<ThemeMode> onThemeModeChanged;
   final WelcomeCompleted onWelcomeCompleted;
+  final bool enableToolchainDiagnostics;
 
   @override
   State<PackFoundryHomePage> createState() => _PackFoundryHomePageState();
@@ -38,6 +41,7 @@ class PackFoundryHomePage extends StatefulWidget {
 
 class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   final _buildService = BuildService();
+  final _toolchainService = ToolchainService();
   final _appNameController = TextEditingController(text: 'My Flutter App');
   final _widthController = TextEditingController(text: '1280');
   final _heightController = TextEditingController(text: '800');
@@ -50,6 +54,11 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   int _buildProgress = 0;
   bool _welcomeDialogShown = false;
   int _workspaceIndex = 1;
+  ToolAvailability _flutterStatus = ToolAvailability.available;
+  ToolAvailability _linuxToolchainStatus = ToolAvailability.available;
+  ToolAvailability _dockerStatus = ToolAvailability.available;
+  ToolAvailability _innoSetupStatus = ToolAvailability.available;
+  ToolAvailability _androidSdkStatus = ToolAvailability.available;
 
   final List<BuildTarget> _targets = [
     BuildTarget(
@@ -95,6 +104,53 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       status: TargetStatus.hostLimited,
     ),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.enableToolchainDiagnostics) {
+      _refreshToolchainStatus();
+    }
+  }
+
+  Future<void> _refreshToolchainStatus() async {
+    final results = await Future.wait([
+      _toolchainService.commandAvailability('flutter', ['--version']),
+      _linuxToolchainAvailable(),
+      _toolchainService.commandAvailability('docker', ['--version']),
+      _toolchainService.commandAvailability('iscc', ['--version']),
+      _androidSdkAvailable(),
+    ]);
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _flutterStatus = results[0];
+      _linuxToolchainStatus = results[1];
+      _dockerStatus = results[2];
+      _innoSetupStatus = results[3];
+      _androidSdkStatus = results[4];
+    });
+  }
+
+  Future<ToolAvailability> _linuxToolchainAvailable() async {
+    final available = await _toolchainService.allCommandsAvailable([
+      const CommandCheck('clang', ['--version']),
+      const CommandCheck('cmake', ['--version']),
+      const CommandCheck('ninja', ['--version']),
+    ]);
+    return available ? ToolAvailability.installed : ToolAvailability.missing;
+  }
+
+  Future<ToolAvailability> _androidSdkAvailable() async {
+    final available = await _toolchainService.anyCommandAvailable([
+      const CommandCheck('sdkmanager', ['--version']),
+      const CommandCheck('adb', ['--version']),
+    ]);
+    return available ? ToolAvailability.installed : ToolAvailability.missing;
+  }
 
   @override
   void didChangeDependencies() {
@@ -148,31 +204,31 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       ToolStatus(
         name: 'Flutter SDK',
         command: 'flutter',
-        status: ToolAvailability.installed,
+        status: _flutterStatus,
         note: l10n.flutterSdkNote,
       ),
       ToolStatus(
         name: 'Linux toolchain',
         command: 'clang, cmake, ninja, GTK',
-        status: ToolAvailability.installed,
+        status: _linuxToolchainStatus,
         note: l10n.linuxToolchainNote,
       ),
       ToolStatus(
         name: 'Docker',
         command: 'docker',
-        status: ToolAvailability.missing,
+        status: _dockerStatus,
         note: l10n.dockerNote,
       ),
       ToolStatus(
         name: 'Inno Setup',
         command: 'iscc.exe',
-        status: ToolAvailability.available,
+        status: _innoSetupStatus,
         note: l10n.innoSetupNote,
       ),
       ToolStatus(
         name: 'Android SDK',
         command: 'sdkmanager, gradle',
-        status: ToolAvailability.missing,
+        status: _androidSdkStatus,
         note: l10n.androidSdkNote,
       ),
     ];
@@ -377,7 +433,13 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     ];
 
     return Scaffold(
-      appBar: AppBar(title: Text(l10n.appTitle)),
+      appBar: AppBar(
+        leading: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Image.asset('assets/icon.png'),
+        ),
+        title: Text(l10n.appTitle),
+      ),
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -532,7 +594,6 @@ class _WorkspaceContent extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         AppSettingsPanel(
-          appNameController: appNameController,
           widthController: widthController,
           heightController: heightController,
           iconPath: iconPath,
@@ -543,6 +604,7 @@ class _WorkspaceContent extends StatelessWidget {
       ],
       _ => [
         BuildDestinationPanel(
+          appNameController: appNameController,
           outputPath: outputPath,
           onChooseOutput: onChooseOutput,
         ),

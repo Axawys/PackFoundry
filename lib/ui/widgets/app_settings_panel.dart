@@ -5,7 +5,6 @@ import 'section.dart';
 
 class AppSettingsPanel extends StatelessWidget {
   const AppSettingsPanel({
-    required this.appNameController,
     required this.widthController,
     required this.heightController,
     required this.iconPath,
@@ -13,7 +12,6 @@ class AppSettingsPanel extends StatelessWidget {
     super.key,
   });
 
-  final TextEditingController appNameController;
   final TextEditingController widthController;
   final TextEditingController heightController;
   final String? iconPath;
@@ -28,11 +26,6 @@ class AppSettingsPanel extends StatelessWidget {
       icon: Icons.tune_outlined,
       child: Column(
         children: [
-          TextField(
-            controller: appNameController,
-            decoration: InputDecoration(labelText: l10n.applicationName),
-          ),
-          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(

@@ -43,14 +43,17 @@ class BuildPanel extends StatelessWidget {
             ),
             const SizedBox(height: 12),
           ],
-          FilledButton.icon(
-            onPressed: isBuilding || selectedTargets == 0 ? null : onBuild,
-            icon: Icon(
-              isBuilding
-                  ? Icons.hourglass_top_outlined
-                  : Icons.rocket_launch_outlined,
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              onPressed: isBuilding || selectedTargets == 0 ? null : onBuild,
+              icon: Icon(
+                isBuilding
+                    ? Icons.hourglass_top_outlined
+                    : Icons.rocket_launch_outlined,
+              ),
+              label: Text(isBuilding ? l10n.building : l10n.buildInstallers),
             ),
-            label: Text(isBuilding ? l10n.building : l10n.buildInstallers),
           ),
           const SizedBox(height: 16),
           for (final entry in log) _LogEntryTile(entry: entry),
