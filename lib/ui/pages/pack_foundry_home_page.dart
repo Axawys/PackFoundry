@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../core/models/build_configuration.dart';
 import '../../core/models/build_log_entry.dart';
 import '../../core/models/build_target.dart';
+import '../../core/models/chip_tone.dart';
 import '../../core/models/builder_environment.dart';
 import '../../core/models/tool_status.dart';
 import '../../core/services/app_preferences.dart';
@@ -14,11 +15,10 @@ import '../../core/services/builder_environment_service.dart';
 import '../../core/services/toolchain_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../widgets/app_settings_panel.dart';
-import '../widgets/build_destination_panel.dart';
 import '../widgets/build_panel.dart';
 import '../widgets/preferences_panel.dart';
 import '../widgets/project_panel.dart';
-import '../widgets/targets_panel.dart';
+import '../widgets/installer_settings_panel.dart';
 import '../widgets/toolchain_panel.dart';
 import '../widgets/welcome_dialog.dart';
 
@@ -53,10 +53,17 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   final _toolchainService = ToolchainService();
   final _builderService = BuilderEnvironmentService();
   final _appNameController = TextEditingController(text: _defaultAppName);
+  final _releaseTagController = TextEditingController();
+  final _developerEmailController = TextEditingController();
+  final _publisherNameController = TextEditingController();
+  final _homepageUrlController = TextEditingController();
+  final _licenseController = TextEditingController(text: 'GPL-2.0-only');
+  final _descriptionController = TextEditingController();
   final _widthController = TextEditingController(text: '1280');
   final _heightController = TextEditingController(text: '800');
   final _buildLog = <BuildLogEntry>[];
   final _roadmapSteps = <BuildRoadmapStep>[];
+  final _projectChecks = <ProjectCheck>[];
 
   String? _projectPath;
   String? _iconPath;
@@ -76,6 +83,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   ToolAvailability _appImageToolStatus = ToolAvailability.available;
   ToolAvailability _debToolStatus = ToolAvailability.available;
   ToolAvailability _rpmToolStatus = ToolAvailability.available;
+  ToolAvailability _tarToolStatus = ToolAvailability.available;
   ToolAvailability _zipToolStatus = ToolAvailability.available;
 
   final List<BuildTarget> _targets = [
@@ -139,6 +147,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       _toolchainService.appImageToolAvailability(),
       _toolchainService.commandAvailability('dpkg-deb', ['--version']),
       _toolchainService.commandAvailability('rpmbuild', ['--version']),
+      _toolchainService.commandAvailability('tar', ['--version']),
       _toolchainService.commandAvailability('zip', ['--version']),
     ]);
 
@@ -158,7 +167,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       _appImageToolStatus = results[4];
       _debToolStatus = results[5];
       _rpmToolStatus = results[6];
-      _zipToolStatus = results[7];
+      _tarToolStatus = results[7];
+      _zipToolStatus = results[8];
     });
   }
 
@@ -230,6 +240,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     return [
       ...nativePackageGroups,
       _appImageBuildGroup(l10n),
+      _tarGzBuildGroup(l10n),
       _windowsBuildGroup(l10n),
     ];
   }
@@ -379,6 +390,25 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     );
   }
 
+  ToolchainGroup _tarGzBuildGroup(AppLocalizations l10n) {
+    return ToolchainGroup(
+      title: l10n.tarGzBuildGroupTitle,
+      subtitle: l10n.tarGzBuildGroupSubtitle,
+      status: _tarGzBuildStatus,
+      installTarget: ToolchainInstallTarget.tarGz,
+      tools: [
+        _flutterTool(l10n),
+        _linuxToolchainTool(l10n),
+        ToolStatus(
+          name: 'tar',
+          command: 'tar',
+          status: _tarToolStatus,
+          note: l10n.tarToolNote,
+        ),
+      ],
+    );
+  }
+
   ToolchainGroup _windowsBuildGroup(AppLocalizations l10n) {
     return ToolchainGroup(
       title: l10n.windowsBuildGroupTitle,
@@ -480,6 +510,15 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     if (_flutterStatus == ToolAvailability.installed &&
         _linuxToolchainStatus == ToolAvailability.installed &&
         _appImageToolStatus == ToolAvailability.installed) {
+      return ToolAvailability.installed;
+    }
+    return ToolAvailability.available;
+  }
+
+  ToolAvailability get _tarGzBuildStatus {
+    if (_flutterStatus == ToolAvailability.installed &&
+        _linuxToolchainStatus == ToolAvailability.installed &&
+        _tarToolStatus == ToolAvailability.installed) {
       return ToolAvailability.installed;
     }
     return ToolAvailability.available;
@@ -681,6 +720,9 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       ToolchainInstallTarget.appImage => const ToolInstallResult.failure(
         'AppImageTool removal is not implemented yet.',
       ),
+      ToolchainInstallTarget.tarGz => const ToolInstallResult.failure(
+        'tar.gz tool removal is not implemented yet.',
+      ),
       ToolchainInstallTarget.exe => ToolInstallResult.failure(
         context.l10n.exeInstallUnsupported,
       ),
@@ -695,6 +737,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       ToolchainInstallTarget.rpm => _installRpmTools(distribution),
       ToolchainInstallTarget.deb => _installDebTools(distribution),
       ToolchainInstallTarget.appImage => _installAppImageTools(distribution),
+      ToolchainInstallTarget.tarGz => _installTarGzTools(distribution),
       ToolchainInstallTarget.exe => _installWindowsTools(distribution),
     };
   }
@@ -739,6 +782,17 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     }
 
     return _installBuilderEnvironment(BuilderEnvironment.debBookworm);
+  }
+
+  Future<ToolInstallResult> _installTarGzTools(_HostDistribution distribution) {
+    return _toolchainService.installSystemPackages(
+      packagesByManager: const {
+        'dnf': ['clang', 'cmake', 'ninja-build', 'gtk3-devel', 'tar'],
+        'apt-get': ['clang', 'cmake', 'ninja-build', 'libgtk-3-dev', 'tar'],
+        'zypper': ['clang', 'cmake', 'ninja', 'gtk3-devel', 'tar'],
+        'pacman': ['clang', 'cmake', 'ninja', 'gtk3', 'tar'],
+      },
+    );
   }
 
   Future<ToolInstallResult> _installWindowsTools(
@@ -843,6 +897,12 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   @override
   void dispose() {
     _appNameController.dispose();
+    _releaseTagController.dispose();
+    _developerEmailController.dispose();
+    _publisherNameController.dispose();
+    _homepageUrlController.dispose();
+    _licenseController.dispose();
+    _descriptionController.dispose();
     _widthController.dispose();
     _heightController.dispose();
     super.dispose();
@@ -874,6 +934,12 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
 
     final configuration = BuildConfiguration(
       appName: _appNameController.text,
+      releaseTag: _releaseTagController.text,
+      developerEmail: _developerEmailController.text,
+      publisherName: _publisherNameController.text,
+      homepageUrl: _homepageUrlController.text,
+      license: _licenseController.text,
+      description: _descriptionController.text,
       projectPath: projectPath,
       outputPath: _outputPath,
       iconPath: _iconPath,
@@ -938,16 +1004,32 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     }
 
     final windowSize = _readFlutterWindowSize(path);
-    final projectAppName = _readProjectAppName(path);
+    final projectMetadata = _readProjectMetadata(path);
+    final projectAppName = projectMetadata.name;
 
     setState(() {
       _projectPath = path;
+      _projectChecks
+        ..clear()
+        ..addAll(_buildProjectChecks(path, projectMetadata));
       if (windowSize != null) {
         _widthController.text = windowSize.width.toString();
         _heightController.text = windowSize.height.toString();
       }
       if (projectAppName != null && _shouldAutofillAppName) {
         _appNameController.text = projectAppName;
+      }
+      if (projectMetadata.version != null &&
+          _releaseTagController.text.trim().isEmpty) {
+        _releaseTagController.text = 'v${projectMetadata.version}';
+      }
+      if (projectMetadata.description != null &&
+          _descriptionController.text.trim().isEmpty) {
+        _descriptionController.text = projectMetadata.description!;
+      }
+      if (projectMetadata.homepage != null &&
+          _homepageUrlController.text.trim().isEmpty) {
+        _homepageUrlController.text = projectMetadata.homepage!;
       }
     });
   }
@@ -957,26 +1039,89 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     return currentName.isEmpty || currentName == _defaultAppName;
   }
 
-  String? _readProjectAppName(String projectPath) {
+  _ProjectMetadata _readProjectMetadata(String projectPath) {
     final file = File(_joinPath(projectPath, 'pubspec.yaml'));
     if (!file.existsSync()) {
-      return null;
+      return const _ProjectMetadata();
     }
 
+    final content = file.readAsStringSync();
+    final rawName = _readPubspecScalar(content, 'name');
+    final name = rawName == null || rawName.isEmpty
+        ? null
+        : rawName
+              .split(RegExp(r'[-_\s]+'))
+              .where((part) => part.isNotEmpty)
+              .map((part) => part[0].toUpperCase() + part.substring(1))
+              .join();
+
+    return _ProjectMetadata(
+      name: name,
+      version: _readPubspecScalar(content, 'version'),
+      description: _readPubspecScalar(content, 'description'),
+      homepage: _readPubspecScalar(content, 'homepage'),
+    );
+  }
+
+  String? _readPubspecScalar(String content, String key) {
     final match = RegExp(
-      r'^name:\s*([^\s#]+)',
+      r'^' + key + r':\s*([^#\n]+)',
       multiLine: true,
-    ).firstMatch(file.readAsStringSync());
-    final rawName = match?.group(1)?.trim();
-    if (rawName == null || rawName.isEmpty) {
+    ).firstMatch(content);
+    final value = match?.group(1)?.trim();
+    if (value == null || value.isEmpty) {
       return null;
     }
+    if (value.length >= 2 &&
+        ((value.startsWith('"') && value.endsWith('"')) ||
+            (value.startsWith("'") && value.endsWith("'")))) {
+      return value.substring(1, value.length - 1);
+    }
+    return value;
+  }
 
-    return rawName
-        .split(RegExp(r'[-_\s]+'))
-        .where((part) => part.isNotEmpty)
-        .map((part) => part[0].toUpperCase() + part.substring(1))
-        .join();
+  List<ProjectCheck> _buildProjectChecks(
+    String projectPath,
+    _ProjectMetadata metadata,
+  ) {
+    final l10n = context.l10n;
+    final hasPubspec = File(
+      _joinPath(projectPath, 'pubspec.yaml'),
+    ).existsSync();
+    final hasLinuxRunner = File(
+      _joinPath(projectPath, 'linux/runner/my_application.cc'),
+    ).existsSync();
+    final hasWindowsRunner = File(
+      _joinPath(projectPath, 'windows/runner/main.cpp'),
+    ).existsSync();
+    final hasVersion = metadata.version != null && metadata.version!.isNotEmpty;
+    final hasDescription =
+        metadata.description != null && metadata.description!.isNotEmpty;
+
+    return [
+      ProjectCheck(
+        label: hasPubspec ? l10n.pubspecFound : l10n.pubspecMissing,
+        tone: hasPubspec ? ChipTone.good : ChipTone.warning,
+      ),
+      if (hasLinuxRunner)
+        ProjectCheck(label: l10n.linuxRunnerFound, tone: ChipTone.good),
+      if (hasWindowsRunner)
+        ProjectCheck(label: l10n.windowsRunnerFound, tone: ChipTone.good),
+      if (!hasLinuxRunner && !hasWindowsRunner)
+        ProjectCheck(label: l10n.desktopRunnersMissing, tone: ChipTone.warning),
+      ProjectCheck(
+        label: hasVersion
+            ? l10n.projectVersionFound
+            : l10n.projectVersionMissing,
+        tone: hasVersion ? ChipTone.good : ChipTone.neutral,
+      ),
+      ProjectCheck(
+        label: hasDescription
+            ? l10n.projectDescriptionFound
+            : l10n.projectDescriptionMissing,
+        tone: hasDescription ? ChipTone.good : ChipTone.neutral,
+      ),
+    ];
   }
 
   _WindowSize? _readFlutterWindowSize(String projectPath) {
@@ -1111,9 +1256,16 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
               toolGroups: toolGroups,
               installingToolTarget: _installingToolTarget,
               projectPath: _projectPath,
+              projectChecks: _projectChecks,
               iconPath: _iconPath,
               outputPath: _outputPath,
               appNameController: _appNameController,
+              releaseTagController: _releaseTagController,
+              developerEmailController: _developerEmailController,
+              publisherNameController: _publisherNameController,
+              homepageUrlController: _homepageUrlController,
+              licenseController: _licenseController,
+              descriptionController: _descriptionController,
               widthController: _widthController,
               heightController: _heightController,
               targets: _targets,
@@ -1208,6 +1360,20 @@ class _HostDistribution {
 
 enum _LinuxDistributionFamily { deb, rpm, unsupportedRpm, unknown }
 
+class _ProjectMetadata {
+  const _ProjectMetadata({
+    this.name,
+    this.version,
+    this.description,
+    this.homepage,
+  });
+
+  final String? name;
+  final String? version;
+  final String? description;
+  final String? homepage;
+}
+
 class _WindowSize {
   const _WindowSize({required this.width, required this.height});
 
@@ -1223,9 +1389,16 @@ class _WorkspaceContent extends StatelessWidget {
     required this.toolGroups,
     required this.installingToolTarget,
     required this.projectPath,
+    required this.projectChecks,
     required this.iconPath,
     required this.outputPath,
     required this.appNameController,
+    required this.releaseTagController,
+    required this.developerEmailController,
+    required this.publisherNameController,
+    required this.homepageUrlController,
+    required this.licenseController,
+    required this.descriptionController,
     required this.widthController,
     required this.heightController,
     required this.targets,
@@ -1252,9 +1425,16 @@ class _WorkspaceContent extends StatelessWidget {
   final List<ToolchainGroup> toolGroups;
   final ToolchainInstallTarget? installingToolTarget;
   final String? projectPath;
+  final List<ProjectCheck> projectChecks;
   final String? iconPath;
   final String? outputPath;
   final TextEditingController appNameController;
+  final TextEditingController releaseTagController;
+  final TextEditingController developerEmailController;
+  final TextEditingController publisherNameController;
+  final TextEditingController homepageUrlController;
+  final TextEditingController licenseController;
+  final TextEditingController descriptionController;
   final TextEditingController widthController;
   final TextEditingController heightController;
   final List<BuildTarget> targets;
@@ -1296,25 +1476,32 @@ class _WorkspaceContent extends StatelessWidget {
       1 => [
         ProjectPanel(
           projectPath: projectPath,
+          checks: projectChecks,
           onChooseProject: onChooseProject,
         ),
         const SizedBox(height: 16),
         AppSettingsPanel(
           widthController: widthController,
           heightController: heightController,
+          releaseTagController: releaseTagController,
+          developerEmailController: developerEmailController,
+          publisherNameController: publisherNameController,
+          homepageUrlController: homepageUrlController,
+          licenseController: licenseController,
+          descriptionController: descriptionController,
           iconPath: iconPath,
           onChooseIcon: onChooseIcon,
         ),
         const SizedBox(height: 16),
-        TargetsPanel(targets: targets, onChanged: onTargetChanged),
-      ],
-      _ => [
-        BuildDestinationPanel(
+        InstallerSettingsPanel(
           appNameController: appNameController,
           outputPath: outputPath,
+          targets: targets,
           onChooseOutput: onChooseOutput,
+          onChanged: onTargetChanged,
         ),
-        const SizedBox(height: 16),
+      ],
+      _ => [
         BuildPanel(
           selectedTargets: selectedTargets,
           isBuilding: isBuilding,

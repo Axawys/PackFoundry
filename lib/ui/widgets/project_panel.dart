@@ -8,11 +8,13 @@ import 'status_chip.dart';
 class ProjectPanel extends StatelessWidget {
   const ProjectPanel({
     required this.projectPath,
+    required this.checks,
     required this.onChooseProject,
     super.key,
   });
 
   final String? projectPath;
+  final List<ProjectCheck> checks;
   final VoidCallback onChooseProject;
 
   @override
@@ -42,21 +44,26 @@ class ProjectPanel extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              StatusChip(label: l10n.pubspecYaml, tone: ChipTone.good),
-              StatusChip(label: l10n.desktopEnabled, tone: ChipTone.good),
-              StatusChip(
-                label: l10n.releaseSigningUnknown,
-                tone: ChipTone.warning,
-              ),
-            ],
-          ),
+          if (checks.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final check in checks)
+                  StatusChip(label: check.label, tone: check.tone),
+              ],
+            ),
+          ],
         ],
       ),
     );
   }
+}
+
+class ProjectCheck {
+  const ProjectCheck({required this.label, required this.tone});
+
+  final String label;
+  final ChipTone tone;
 }

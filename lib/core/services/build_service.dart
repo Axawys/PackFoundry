@@ -849,6 +849,7 @@ class BuildService {
       );
       await File(_joinPath(innoDirectory.path, 'setup.iss')).writeAsString(
         _windowsInnoSetupScript(
+          configuration: configuration,
           appName: appName,
           packageName: packageName,
           iconRelativePath: iconRelativePath,
@@ -949,18 +950,24 @@ class BuildService {
   }
 
   String _windowsInnoSetupScript({
+    required BuildConfiguration configuration,
     required String appName,
     required String packageName,
     required String? iconRelativePath,
   }) {
     final escapedAppName = _innoValue(appName);
     final escapedPackageName = _innoValue(packageName);
+    final publisher = _innoValue(_publisherName(configuration));
+    final version = _innoValue(
+      _packageVersion(configuration, fallback: '1.0.0')!,
+    );
+    final homepage = _innoValue(configuration.homepageUrl.trim());
     final iconLine =
         iconRelativePath != null && iconRelativePath.endsWith('.ico')
         ? 'SetupIconFile=$iconRelativePath\n'
         : '';
     return '''#define MyAppName "$escapedAppName"
-#define MyAppPublisher "PackFoundry"
+#define MyAppPublisher "$publisher"
 #ifndef MyAppExeName
 #define MyAppExeName "$escapedPackageName.exe"
 #endif
@@ -968,8 +975,9 @@ class BuildService {
 [Setup]
 AppId={{$escapedPackageName-packfoundry}}
 AppName={#MyAppName}
-AppVersion=1.0.0
+AppVersion=$version
 AppPublisher={#MyAppPublisher}
+${homepage.isEmpty ? '' : 'AppPublisherURL=$homepage\nAppSupportURL=$homepage\nAppUpdatesURL=$homepage'}
 DefaultDirName={autopf}\\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
@@ -1496,7 +1504,7 @@ Required Windows-side tools prepared by the script:
           ? 'Flutter App'
           : configuration.appName.trim();
       final packageName = _slugify(appName);
-      final rpmVersion = await _readRpmVersion(configuration.projectPath);
+      final rpmVersion = await _readRpmVersion(configuration);
       final desktopFileName = '$packageName.desktop';
       final iconFileName = await _prepareRpmIcon(
         configuration: configuration,
@@ -1535,6 +1543,7 @@ Terminal=false
       );
       await specFile.writeAsString(
         _rpmSpec(
+          configuration: configuration,
           appName: appName,
           packageName: packageName,
           version: rpmVersion.version,
@@ -1618,6 +1627,7 @@ Terminal=false
   }
 
   String _rpmSpec({
+    required BuildConfiguration configuration,
     required String appName,
     required String packageName,
     required String version,
@@ -1632,17 +1642,18 @@ Terminal=false
         ? '%{buildroot}/usr/share/icons/hicolor/scalable/apps/$packageName.svg'
         : '%{buildroot}/usr/share/icons/hicolor/256x256/apps/$packageName.png';
 
+    final homepage = configuration.homepageUrl.trim();
     return '''%global __brp_check_rpaths %{nil}
 
 Name:           $packageName
 Version:        $version
 Release:        $release%{?dist}
-Summary:        ${_rpmHeaderValue(appName)}
-License:        GPL-2.0-only
-Requires:       gtk3, libstdc++, xz-libs
+Summary:        ${_rpmHeaderValue(_packageSummary(configuration, appName))}
+License:        ${_rpmHeaderValue(_packageLicense(configuration))}
+${homepage.isEmpty ? '' : 'URL:            ${_rpmHeaderValue(homepage)}\n'}Requires:       gtk3, libstdc++, xz-libs
 
 %description
-${_rpmDescription(appName)} packaged with PackFoundry.
+${_rpmDescription(_packageDescription(configuration, appName))}
 
 %prep
 
@@ -1662,13 +1673,18 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
 /usr/share/icons/hicolor/*/apps/$packageName.*
 
 %changelog
-* ${_rpmChangelogDate()} PackFoundry <packfoundry@localhost> - $version-$release
+* ${_rpmChangelogDate()} ${_rpmHeaderValue(_publisherName(configuration))} <${_rpmHeaderValue(_developerEmail(configuration))}> - $version-$release
 - Packaged with PackFoundry
 ''';
   }
 
-  Future<_RpmVersion> _readRpmVersion(String projectPath) async {
-    final pubspec = File(_joinPath(projectPath, 'pubspec.yaml'));
+  Future<_RpmVersion> _readRpmVersion(BuildConfiguration configuration) async {
+    final configuredVersion = _packageVersion(configuration);
+    if (configuredVersion != null) {
+      return _rpmVersionFromRaw(configuredVersion);
+    }
+
+    final pubspec = File(_joinPath(configuration.projectPath, 'pubspec.yaml'));
     if (!pubspec.existsSync()) {
       return const _RpmVersion(version: '1.0.0', release: '1');
     }
@@ -1681,8 +1697,12 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
     if (rawVersion == null || rawVersion.isEmpty) {
       return const _RpmVersion(version: '1.0.0', release: '1');
     }
+    return _rpmVersionFromRaw(rawVersion);
+  }
 
-    final parts = rawVersion.split('+');
+  _RpmVersion _rpmVersionFromRaw(String rawVersion) {
+    final normalizedRaw = _normalizeReleaseVersion(rawVersion);
+    final parts = normalizedRaw.split('+');
     final version = parts.first.replaceAll(RegExp(r'[^A-Za-z0-9._~]'), '.');
     final release = parts.length > 1
         ? parts[1].replaceAll(RegExp(r'[^A-Za-z0-9._~]'), '.')
@@ -1842,7 +1862,7 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
         ? 'Flutter App'
         : configuration.appName.trim();
     final packageName = _slugify(appName);
-    final version = await _readDebianVersion(workspace);
+    final version = await _readDebianVersion(workspace, configuration);
     final iconPath = await _copyIconIntoWorkspace(
       workspace: workspace,
       iconPath: configuration.iconPath,
@@ -1863,6 +1883,12 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
       'PACKFOUNDRY_PACKAGE_NAME=$packageName',
       '-e',
       'PACKFOUNDRY_VERSION=$version',
+      '-e',
+      'PACKFOUNDRY_MAINTAINER=${_dockerEnvValue(_debianMaintainer(configuration))}',
+      '-e',
+      'PACKFOUNDRY_DESCRIPTION=${_dockerEnvValue(_packageDescription(configuration, appName))}',
+      '-e',
+      'PACKFOUNDRY_HOMEPAGE=${_dockerEnvValue(configuration.homepageUrl.trim())}',
       '-e',
       'PACKFOUNDRY_OUTPUT_BASENAME=${_dockerEnvValue(outputFileName)}',
       if (iconPath != null) ...[
@@ -2028,11 +2054,14 @@ Version: $PACKFOUNDRY_VERSION
 Section: utils
 Priority: optional
 Architecture: $arch
-Maintainer: PackFoundry <packfoundry@localhost>
+Maintainer: $PACKFOUNDRY_MAINTAINER
 Depends: libgtk-3-0, libstdc++6, liblzma5
-Description: $PACKFOUNDRY_APP_NAME
+Description: $PACKFOUNDRY_DESCRIPTION
  Packaged with PackFoundry.
 EOF
+if [ -n "${PACKFOUNDRY_HOMEPAGE:-}" ]; then
+  printf 'Homepage: %s\n' "$PACKFOUNDRY_HOMEPAGE" >> "$package_root/DEBIAN/control"
+fi
 
 cat > "$package_root/usr/share/applications/$PACKFOUNDRY_PACKAGE_NAME.desktop" <<EOF
 [Desktop Entry]
@@ -2179,7 +2208,17 @@ echo "$deb_path"
     );
   }
 
-  Future<String> _readDebianVersion(Directory workspace) async {
+  Future<String> _readDebianVersion(
+    Directory workspace,
+    BuildConfiguration configuration,
+  ) async {
+    final configuredVersion = _packageVersion(configuration);
+    if (configuredVersion != null) {
+      final debianVersion = _normalizeReleaseVersion(
+        configuredVersion,
+      ).replaceAll(RegExp(r'[^A-Za-z0-9.+:~_-]'), '');
+      return debianVersion.isEmpty ? '1.0.0' : debianVersion;
+    }
     final pubspec = File(_joinPath(workspace.path, 'pubspec.yaml'));
     if (!pubspec.existsSync()) {
       return '1.0.0';
@@ -2476,6 +2515,72 @@ Terminal=false
       'arm64' => 'aarch64',
       _ => 'x86_64',
     };
+  }
+
+  String _publisherName(BuildConfiguration configuration) {
+    final value = configuration.publisherName.trim();
+    return value.isEmpty ? 'PackFoundry' : value;
+  }
+
+  String _developerEmail(BuildConfiguration configuration) {
+    final value = configuration.developerEmail.trim();
+    return value.isEmpty ? 'packfoundry@localhost' : value;
+  }
+
+  String _debianMaintainer(BuildConfiguration configuration) {
+    return '${_publisherName(configuration)} <${_developerEmail(configuration)}>';
+  }
+
+  String _packageLicense(BuildConfiguration configuration) {
+    final value = configuration.license.trim();
+    return value.isEmpty ? 'GPL-2.0-only' : value;
+  }
+
+  String _packageSummary(
+    BuildConfiguration configuration,
+    String fallbackAppName,
+  ) {
+    final description = configuration.description.trim();
+    if (description.isEmpty) {
+      return fallbackAppName;
+    }
+    return description.split(RegExp(r'[\r\n]+')).first.trim();
+  }
+
+  String _packageDescription(
+    BuildConfiguration configuration,
+    String fallbackAppName,
+  ) {
+    final description = configuration.description.trim();
+    if (description.isEmpty) {
+      return '$fallbackAppName packaged with PackFoundry.';
+    }
+    return description
+        .replaceAll('\r', ' ')
+        .replaceAll('\n', ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  String? _packageVersion(
+    BuildConfiguration configuration, {
+    String? fallback,
+  }) {
+    final value = configuration.releaseTag.trim();
+    if (value.isEmpty) {
+      return fallback;
+    }
+    return _normalizeReleaseVersion(value);
+  }
+
+  String _normalizeReleaseVersion(String value) {
+    final trimmed = value.trim();
+    if (trimmed.length > 1 &&
+        (trimmed.startsWith('v') || trimmed.startsWith('V')) &&
+        RegExp(r'\d').hasMatch(trimmed[1])) {
+      return trimmed.substring(1);
+    }
+    return trimmed;
   }
 
   String _safeFileName(String value) {

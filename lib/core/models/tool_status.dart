@@ -80,4 +80,4 @@ class ToolInstallProgress {
 
 enum ToolAvailability { installed, available, missing }
 
-enum ToolchainInstallTarget { rpm, deb, appImage, exe }
+enum ToolchainInstallTarget { rpm, deb, appImage, tarGz, exe }

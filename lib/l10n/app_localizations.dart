@@ -69,15 +69,38 @@ class AppLocalizations {
   String get chooseOutput => _isRu ? 'Выбрать папку экспорта' : 'Choose output';
   String get iconTypeGroup => _isRu ? 'Иконки приложения' : 'Application icons';
   String get chooseIcon => _isRu ? 'Выбрать иконку' : 'Choose icon';
-  String get pubspecYaml => 'pubspec.yaml';
-  String get desktopEnabled => _isRu ? 'desktop включён' : 'desktop enabled';
-  String get releaseSigningUnknown =>
-      _isRu ? 'подпись релиза не настроена' : 'release signing unknown';
+  String get pubspecFound =>
+      _isRu ? 'pubspec.yaml найден' : 'pubspec.yaml found';
+  String get pubspecMissing =>
+      _isRu ? 'pubspec.yaml не найден' : 'pubspec.yaml missing';
+  String get linuxRunnerFound =>
+      _isRu ? 'Linux runner найден' : 'Linux runner found';
+  String get windowsRunnerFound =>
+      _isRu ? 'Windows runner найден' : 'Windows runner found';
+  String get desktopRunnersMissing =>
+      _isRu ? 'Desktop runners не найдены' : 'Desktop runners missing';
+  String get projectVersionFound => _isRu ? 'Версия найдена' : 'Version found';
+  String get projectVersionMissing =>
+      _isRu ? 'Версия не указана' : 'Version missing';
+  String get projectDescriptionFound =>
+      _isRu ? 'Описание найдено' : 'Description found';
+  String get projectDescriptionMissing =>
+      _isRu ? 'Описание не указано' : 'Description missing';
 
   String get applicationSettings =>
       _isRu ? 'Настройки приложения' : 'Application settings';
   String get applicationName =>
       _isRu ? 'Название приложения' : 'Application name';
+  String get releaseMetadata =>
+      _isRu ? 'Метаданные релиза' : 'Release metadata';
+  String get releaseTag => _isRu ? 'Тег релиза' : 'Release tag';
+  String get developerEmail => _isRu ? 'Почта разработчика' : 'Developer email';
+  String get publisherName =>
+      _isRu ? 'Разработчик / издатель' : 'Developer / publisher';
+  String get homepageUrl => _isRu ? 'Сайт проекта' : 'Project homepage';
+  String get license => _isRu ? 'Лицензия' : 'License';
+  String get packageDescription =>
+      _isRu ? 'Описание пакета' : 'Package description';
   String get windowWidth => _isRu ? 'Ширина окна' : 'Window width';
   String get windowHeight => _isRu ? 'Высота окна' : 'Window height';
   String get noIconSelected => _isRu ? 'Иконка не выбрана' : 'No icon selected';
@@ -90,6 +113,7 @@ class AppLocalizations {
   String get debBuildGroupTitle => 'DEB';
   String get rpmBuildGroupTitle => 'RPM';
   String get appImageBuildGroupTitle => 'APPIMAGE';
+  String get tarGzBuildGroupTitle => 'TAR.GZ';
   String get windowsBuildGroupTitle => 'EXE';
   String get installMissingTools =>
       _isRu ? 'Установить недостающие инструменты' : 'Install missing tools';
@@ -167,6 +191,9 @@ class AppLocalizations {
   String get appImageBuildGroupSubtitle => _isRu
       ? 'Сборка переносимого AppImage для Linux.'
       : 'Build a portable AppImage for Linux.';
+  String get tarGzBuildGroupSubtitle => _isRu
+      ? 'Сборка переносимого tar.gz архива с Linux release bundle.'
+      : 'Build a portable tar.gz archive with the Linux release bundle.';
   String get windowsBuildGroupSubtitle => _isRu
       ? 'PackFoundry создаёт zip-набор: проект, Inno Setup config и скрипт сборки для Windows.'
       : 'PackFoundry creates a zip kit with the project, Inno Setup config and Windows build script.';
@@ -192,6 +219,9 @@ class AppLocalizations {
   String get appImageToolNote => _isRu
       ? 'Упаковывает AppImage. Если отсутствует, PackFoundry может скачать его в кеш.'
       : 'Packages AppImage. If missing, PackFoundry can download it to the cache.';
+  String get tarToolNote => _isRu
+      ? 'Сжимает Linux release bundle в переносимый tar.gz архив.'
+      : 'Compresses the Linux release bundle into a portable tar.gz archive.';
   String get dockerNote => _isRu
       ? 'Нужен для сборки пакетов в контейнерах, например deb на Fedora.'
       : 'Required for container builds, such as deb packaging on Fedora.';

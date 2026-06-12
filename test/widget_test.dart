@@ -36,7 +36,6 @@ void main() {
 
     await tester.tap(find.text('Build'));
     await tester.pump();
-    expect(find.text('Package export'), findsOneWidget);
     expect(find.text('0 selected targets'), findsOneWidget);
     expect(
       find.widgetWithText(FilledButton, 'Build installers'),
@@ -393,7 +392,6 @@ void main() {
 
     await tester.tap(find.text('Сборка'));
     await tester.pump();
-    expect(find.text('Экспорт пакетов'), findsOneWidget);
     expect(
       find.widgetWithText(FilledButton, 'Собрать установщики'),
       findsOneWidget,
