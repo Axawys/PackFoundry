@@ -21,6 +21,15 @@ PackFoundry — GUI-приложение на Flutter для упаковки Fl
 - Пошаговый roadmap сборки с прогрессом, раскрываемыми этапами, логами и примерным оставшимся временем.
 - Русская и английская локализация, светлая/тёмная/системная тема.
 
+## Скриншоты
+
+<img width="2152" height="1299" alt="Screenshot From 2026-06-12 19-18-27" src="https://github.com/user-attachments/assets/f433ca8c-2889-4227-b267-19eb0333a318" />
+<img width="2152" height="1299" alt="Screenshot From 2026-06-12 19-18-31" src="https://github.com/user-attachments/assets/39579b7e-9ce0-42d4-b46c-a329ea8051b1" />
+<img width="2152" height="1299" alt="Screenshot From 2026-06-12 19-18-36" src="https://github.com/user-attachments/assets/7a0a7519-f8c9-4997-820c-487a237f8521" />
+<img width="2152" height="1250" alt="Screenshot From 2026-06-12 18-45-36" src="https://github.com/user-attachments/assets/3d7b2a99-fc76-44ce-beaf-b02c287ae8e7" />
+
+
+
 ## Как это выглядит для пользователя
 
 1. Открыть PackFoundry.
