@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models/build_configuration.dart';
+import '../models/builder_environment.dart';
 import '../models/build_log_entry.dart';
 import '../models/build_target.dart';
+import 'builder_environment_service.dart';
 
 class BuildService {
   static const _stepProject = 'project';
@@ -17,12 +19,14 @@ class BuildService {
   static const _stepDebContainer = 'deb-container';
   static const _stepDebBuild = 'deb-build';
   static const _stepDebPackage = 'deb-package';
+  static const _stepWindowsKit = 'windows-kit';
   static const _stepSummary = 'summary';
   static const _stepCleanup = 'cleanup';
 
   static const _appImageToolBaseUrl =
       'https://github.com/AppImage/AppImageKit/releases/download/continuous';
-  static const _debianDockerImage = 'debian:bookworm';
+
+  final _builderEnvironmentService = BuilderEnvironmentService();
 
   Stream<BuildEvent> build(BuildConfiguration configuration) async* {
     final selectedTargets = configuration.targets
@@ -62,8 +66,16 @@ class BuildService {
     final linuxTargets = selectedTargets
         .where((target) => target.platform == 'Linux')
         .toList();
+    final windowsTargets = selectedTargets
+        .where((target) => target.platform == 'Windows')
+        .toList();
 
-    yield BuildEvent.roadmapPlan(_createRoadmapPlan(linuxTargets));
+    yield BuildEvent.roadmapPlan(
+      _createRoadmapPlan(
+        linuxTargets: linuxTargets,
+        windowsTargets: windowsTargets,
+      ),
+    );
 
     Directory? buildTempDirectory;
     var dockerTouchedWorkspace = false;
@@ -102,25 +114,28 @@ class BuildService {
         ),
       );
 
-      for (final target in selectedTargets.where(
-        (target) => target.platform != 'Linux',
-      )) {
+      final unsupportedTargets = selectedTargets
+          .where(
+            (target) =>
+                target.platform != 'Linux' && target.platform != 'Windows',
+          )
+          .toList();
+      for (final target in unsupportedTargets) {
         yield BuildEvent.log(
           BuildLogEntry(
             title: '${target.platform} ${target.artifact} skipped',
-            detail:
-                'This prototype currently builds Linux targets on Linux hosts.',
+            detail: 'This target is not wired yet.',
             state: BuildLogState.warning,
           ),
         );
       }
 
-      if (linuxTargets.isEmpty) {
+      if (linuxTargets.isEmpty && windowsTargets.isEmpty) {
         yield const BuildEvent.log(
           BuildLogEntry(
-            title: 'No Linux targets selected',
+            title: 'No supported targets selected',
             detail:
-                'Select AppImage, deb, rpm or tar.gz to build on this host.',
+                'Select AppImage, deb, rpm, tar.gz or Windows EXE build kit.',
             state: BuildLogState.warning,
           ),
         );
@@ -268,6 +283,31 @@ class BuildService {
         );
       }
 
+      if (windowsTargets.isNotEmpty) {
+        yield const BuildEvent.progress(58);
+        yield const BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepWindowsKit,
+            state: BuildRoadmapStepState.running,
+            progress: 10,
+            detail: 'Preparing transferable Windows build kit zip.',
+          ),
+        );
+        yield const BuildEvent.log(
+          BuildLogEntry(
+            title: 'Preparing Windows build kit',
+            detail:
+                'Creating a zip with the Flutter project, Inno Setup config and a Windows build script.',
+            state: BuildLogState.running,
+          ),
+        );
+        yield* _createWindowsBuildKit(
+          configuration: configuration,
+          workspace: workspace,
+          outputDirectory: outputDirectory,
+        );
+      }
+
       if (debTargets.isNotEmpty) {
         yield const BuildEvent.progress(60);
         yield const BuildEvent.roadmapUpdate(
@@ -279,11 +319,11 @@ class BuildService {
           ),
         );
         dockerTouchedWorkspace = true;
-        yield const BuildEvent.log(
+        yield BuildEvent.log(
           BuildLogEntry(
             title: 'Packaging deb in Docker',
             detail:
-                'Using $_debianDockerImage to build and package without depending on the host distro.',
+                'Using ${BuilderEnvironment.debBookworm.imageTag} to build and package without depending on the host distro.',
             state: BuildLogState.running,
           ),
         );
@@ -355,7 +395,10 @@ class BuildService {
     }
   }
 
-  List<BuildRoadmapStep> _createRoadmapPlan(List<BuildTarget> linuxTargets) {
+  List<BuildRoadmapStep> _createRoadmapPlan({
+    required List<BuildTarget> linuxTargets,
+    required List<BuildTarget> windowsTargets,
+  }) {
     final hasDeb = linuxTargets.any(
       (target) => target.artifact == 'deb package',
     );
@@ -367,6 +410,9 @@ class BuildService {
     );
     final hasTarGz = linuxTargets.any(
       (target) => target.artifact == 'tar.gz bundle',
+    );
+    final hasWindowsKit = windowsTargets.any(
+      (target) => target.artifact == 'Inno Setup exe',
     );
     final hasLocalBuild = hasRpm || hasAppImage || hasTarGz;
     var number = 1;
@@ -437,24 +483,33 @@ class BuildService {
           description: 'Archive the Linux release bundle.',
           estimatedSeconds: 10,
         ),
+      if (hasWindowsKit)
+        step(
+          id: _stepWindowsKit,
+          title: 'WINDOWS KIT',
+          description:
+              'Create a transferable zip with project, Inno Setup config and Windows build script.',
+          estimatedSeconds: 20,
+        ),
       if (hasDeb) ...[
         step(
           id: _stepDebContainer,
-          title: 'DEB container',
-          description: 'Start Debian Docker builder and install build tools.',
-          estimatedSeconds: 180,
+          title: 'DEB builder',
+          description: 'Start the cached Debian builder environment.',
+          estimatedSeconds: 10,
         ),
         step(
           id: _stepDebBuild,
           title: 'DEB build',
-          description: 'Build the Linux release bundle inside Debian.',
-          estimatedSeconds: 180,
+          description:
+              'Resolve dependencies and compile inside the cached builder.',
+          estimatedSeconds: 90,
         ),
         step(
           id: _stepDebPackage,
           title: 'DEB package',
           description: 'Create DEBIAN/control and run dpkg-deb.',
-          estimatedSeconds: 30,
+          estimatedSeconds: 15,
         ),
       ],
       step(
@@ -467,8 +522,8 @@ class BuildService {
         id: _stepCleanup,
         title: 'Cleanup',
         description:
-            'Remove temporary workspaces. Docker builds may contain many generated files.',
-        estimatedSeconds: hasDeb ? 180 : 15,
+            'Remove temporary workspaces. Builder builds keep heavy caches outside this folder.',
+        estimatedSeconds: hasDeb ? 30 : 15,
       ),
     ];
   }
@@ -515,8 +570,8 @@ class BuildService {
   Future<void> _tryTakeOwnershipOfTemporaryDirectory(
     Directory directory,
   ) async {
-    final docker = await _findExecutable('docker');
-    if (docker == null) {
+    final runtime = await _builderEnvironmentService.resolveRuntime();
+    if (runtime == null) {
       return;
     }
 
@@ -526,12 +581,12 @@ class BuildService {
       return;
     }
 
-    await Process.run(docker.path, [
+    await Process.run(runtime.executable, [
       'run',
       '--rm',
       '-v',
       '${directory.path}:/cleanup',
-      _debianDockerImage,
+      BuilderEnvironment.debBookworm.imageTag,
       'chown',
       '-R',
       '$userId:$groupId',
@@ -730,6 +785,500 @@ class BuildService {
         55 + (((index + 1) / targets.length) * 40).round(),
       );
     }
+  }
+
+  Stream<BuildEvent> _createWindowsBuildKit({
+    required BuildConfiguration configuration,
+    required Directory workspace,
+    required Directory outputDirectory,
+  }) async* {
+    Directory? tempDirectory;
+    try {
+      final zip = await _findExecutable('zip');
+      if (zip == null) {
+        yield const BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepWindowsKit,
+            state: BuildRoadmapStepState.warning,
+            progress: 100,
+            detail: 'zip command was not found in PATH.',
+          ),
+        );
+        yield const BuildEvent.log(
+          BuildLogEntry(
+            title: 'Windows build kit failed',
+            detail: 'zip command was not found in PATH.',
+            state: BuildLogState.warning,
+          ),
+        );
+        return;
+      }
+
+      final appName = configuration.appName.trim().isEmpty
+          ? 'Flutter App'
+          : configuration.appName.trim();
+      final packageName = _slugify(appName);
+      final safeName = _safeFileName(appName);
+      tempDirectory = await Directory.systemTemp.createTemp(
+        'pack_foundry_windows_kit_',
+      );
+      final kitRoot = Directory(
+        _joinPath(tempDirectory.path, '${packageName}_windows_build_kit'),
+      );
+      final projectDirectory = Directory(_joinPath(kitRoot.path, 'project'));
+      final scriptsDirectory = Directory(_joinPath(kitRoot.path, 'scripts'));
+      final innoDirectory = Directory(_joinPath(kitRoot.path, 'inno'));
+      final assetsDirectory = Directory(_joinPath(kitRoot.path, 'assets'));
+      await scriptsDirectory.create(recursive: true);
+      await innoDirectory.create(recursive: true);
+      await assetsDirectory.create(recursive: true);
+
+      yield const BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepWindowsKit,
+          state: BuildRoadmapStepState.running,
+          progress: 35,
+          detail: 'Copying project and writing Windows helper files.',
+        ),
+      );
+
+      await _copyDirectory(workspace, projectDirectory);
+      final iconRelativePath = await _copyWindowsKitIcon(
+        assetsDirectory: assetsDirectory,
+        iconPath: configuration.iconPath,
+      );
+      await File(_joinPath(innoDirectory.path, 'setup.iss')).writeAsString(
+        _windowsInnoSetupScript(
+          appName: appName,
+          packageName: packageName,
+          iconRelativePath: iconRelativePath,
+        ),
+      );
+      await File(
+        _joinPath(scriptsDirectory.path, 'build_windows.ps1'),
+      ).writeAsString(_windowsBuildPowerShellScript(appName: appName));
+      await File(
+        _joinPath(kitRoot.path, 'README_WINDOWS_BUILD.txt'),
+      ).writeAsString(_windowsBuildKitReadme(appName));
+
+      yield const BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepWindowsKit,
+          state: BuildRoadmapStepState.running,
+          progress: 70,
+          detail: 'Compressing Windows build kit zip.',
+        ),
+      );
+
+      final outputFile = File(
+        _joinPath(outputDirectory.path, '${safeName}_windows_build_kit.zip'),
+      );
+      if (outputFile.existsSync()) {
+        await outputFile.delete();
+      }
+      final result = await Process.run(
+        zip.path,
+        ['-qr', outputFile.path, _basename(kitRoot.path)],
+        workingDirectory: tempDirectory.path,
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+
+      if (result.exitCode != 0 || !outputFile.existsSync()) {
+        yield BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepWindowsKit,
+            state: BuildRoadmapStepState.warning,
+            progress: 100,
+            detail: _shortProcessOutput(result),
+          ),
+        );
+        yield BuildEvent.log(
+          BuildLogEntry(
+            title: 'Windows build kit failed',
+            detail: _shortProcessOutput(result),
+            state: BuildLogState.warning,
+          ),
+        );
+        return;
+      }
+
+      yield BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepWindowsKit,
+          state: BuildRoadmapStepState.success,
+          progress: 100,
+          detail: outputFile.path,
+        ),
+      );
+      yield BuildEvent.log(
+        BuildLogEntry(
+          title: 'Created Windows build kit',
+          detail: outputFile.path,
+          state: BuildLogState.success,
+        ),
+      );
+    } finally {
+      if (tempDirectory != null && tempDirectory.existsSync()) {
+        await tempDirectory.delete(recursive: true);
+      }
+    }
+  }
+
+  Future<String?> _copyWindowsKitIcon({
+    required Directory assetsDirectory,
+    required String? iconPath,
+  }) async {
+    if (iconPath == null || iconPath.isEmpty) {
+      return null;
+    }
+
+    final source = File(iconPath);
+    if (!source.existsSync()) {
+      return null;
+    }
+
+    final extension = _extension(source.path).toLowerCase();
+    final fileName = extension == '.ico'
+        ? 'installer.ico'
+        : extension == '.svg'
+        ? 'icon.svg'
+        : 'icon.png';
+    await source.copy(_joinPath(assetsDirectory.path, fileName));
+    return '../assets/$fileName';
+  }
+
+  String _windowsInnoSetupScript({
+    required String appName,
+    required String packageName,
+    required String? iconRelativePath,
+  }) {
+    final escapedAppName = _innoValue(appName);
+    final escapedPackageName = _innoValue(packageName);
+    final iconLine =
+        iconRelativePath != null && iconRelativePath.endsWith('.ico')
+        ? 'SetupIconFile=$iconRelativePath\n'
+        : '';
+    return '''#define MyAppName "$escapedAppName"
+#define MyAppPublisher "PackFoundry"
+#ifndef MyAppExeName
+#define MyAppExeName "$escapedPackageName.exe"
+#endif
+
+[Setup]
+AppId={{$escapedPackageName-packfoundry}}
+AppName={#MyAppName}
+AppVersion=1.0.0
+AppPublisher={#MyAppPublisher}
+DefaultDirName={autopf}\\{#MyAppName}
+DefaultGroupName={#MyAppName}
+DisableProgramGroupPage=yes
+OutputDir=..\\output
+OutputBaseFilename=$escapedPackageName-setup
+Compression=lzma
+SolidCompression=yes
+WizardStyle=modern
+ArchitecturesAllowed=x64
+ArchitecturesInstallIn64BitMode=x64
+$iconLine
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
+
+[Files]
+Source: "..\\project\\build\\windows\\x64\\runner\\Release\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Icons]
+Name: "{group}\\{#MyAppName}"; Filename: "{app}\\{#MyAppExeName}"
+Name: "{autodesktop}\\{#MyAppName}"; Filename: "{app}\\{#MyAppExeName}"; Tasks: desktopicon
+
+[Run]
+Filename: "{app}\\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+''';
+  }
+
+  String _windowsBuildPowerShellScript({required String appName}) {
+    final escapedAppName = _powerShellSingleQuoted(appName);
+    return '''param(
+  [string]\$FlutterChannel = 'stable'
+)
+
+\$ErrorActionPreference = 'Stop'
+\$Root = Split-Path -Parent \$PSScriptRoot
+\$ProjectDir = Join-Path \$Root 'project'
+\$InnoScript = Join-Path \$Root 'inno\\setup.iss'
+\$OutputDir = Join-Path \$Root 'output'
+\$AppName = '$escapedAppName'
+
+function Write-Step {
+  param([string]\$Message)
+  Write-Host ''
+  Write-Host "=== \$Message ===" -ForegroundColor Cyan
+}
+
+function Test-CommandAvailable {
+  param([string]\$Name)
+  return \$null -ne (Get-Command \$Name -ErrorAction SilentlyContinue)
+}
+
+function Invoke-CheckedNative {
+  param(
+    [string]\$Executable,
+    [string[]]\$Arguments,
+    [string]\$ErrorMessage
+  )
+  & \$Executable @Arguments
+  if (\$LASTEXITCODE -ne 0) {
+    throw "\$ErrorMessage Exit code: \$LASTEXITCODE."
+  }
+}
+
+function Test-DeveloperModeEnabled {
+  \$path = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock'
+  try {
+    \$value = Get-ItemPropertyValue -Path \$path -Name 'AllowDevelopmentWithoutDevLicense' -ErrorAction Stop
+    return \$value -eq 1
+  } catch {
+    return \$false
+  }
+}
+
+function Ensure-DeveloperMode {
+  if (Test-DeveloperModeEnabled) {
+    Write-Host 'Developer Mode is already enabled.'
+    return
+  }
+
+  Write-Host 'Developer Mode is required by Flutter plugins on Windows because they use symlinks.'
+  \$regArguments = @(
+    'add', 'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock',
+    '/t', 'REG_DWORD', '/f', '/v', 'AllowDevelopmentWithoutDevLicense', '/d', '1'
+  )
+  & reg.exe @regArguments | Out-Host
+  if (\$LASTEXITCODE -eq 0 -and (Test-DeveloperModeEnabled)) {
+    Write-Host 'Developer Mode was enabled automatically.'
+    return
+  }
+
+  Start-Process 'ms-settings:developers'
+  throw 'Developer Mode is not enabled. Enable it in Windows Settings, then run this script again.'
+}
+
+function Add-PathForCurrentProcess {
+  param([string]\$Directory)
+  if ([string]::IsNullOrWhiteSpace(\$Directory)) { return }
+  if (-not (Test-Path \$Directory)) { return }
+  if ((\$env:Path -split ';') -notcontains \$Directory) {
+    \$env:Path = "\$env:Path;\$Directory"
+  }
+}
+
+function Find-GitCommand {
+  \$command = Get-Command 'git.exe' -ErrorAction SilentlyContinue
+  if (\$null -ne \$command) { return \$command.Source }
+
+  \$candidates = @(
+    "\$env:ProgramFiles\\Git\\cmd\\git.exe",
+    "\$env:ProgramFiles\\Git\\bin\\git.exe",
+    "\${env:ProgramFiles(x86)}\\Git\\cmd\\git.exe",
+    "\${env:ProgramFiles(x86)}\\Git\\bin\\git.exe",
+    "\$env:LOCALAPPDATA\\Programs\\Git\\cmd\\git.exe",
+    "\$env:LOCALAPPDATA\\Programs\\Git\\bin\\git.exe"
+  )
+  foreach (\$candidate in \$candidates) {
+    if (Test-Path \$candidate) { return \$candidate }
+  }
+  return \$null
+}
+
+function Ensure-GitAvailable {
+  \$git = Find-GitCommand
+  if (-not [string]::IsNullOrWhiteSpace(\$git)) {
+    Add-PathForCurrentProcess -Directory (Split-Path -Parent \$git)
+    return \$git
+  }
+
+  Write-Step 'Installing Git'
+  Invoke-WingetInstall -PackageId 'Git.Git'
+  \$git = Find-GitCommand
+  if ([string]::IsNullOrWhiteSpace(\$git)) {
+    throw 'Git was installed, but git.exe was not found. Restart PowerShell or install Git manually.'
+  }
+  Add-PathForCurrentProcess -Directory (Split-Path -Parent \$git)
+  return \$git
+}
+
+function Invoke-WingetInstall {
+  param([string]\$PackageId, [string[]]\$ExtraArguments = @())
+  if (-not (Test-CommandAvailable 'winget')) {
+    throw 'winget was not found. Install App Installer from Microsoft Store or install tools manually.'
+  }
+  \$arguments = @(
+    'install', '--id', \$PackageId, '--exact',
+    '--accept-source-agreements', '--accept-package-agreements',
+    '--silent'
+  ) + \$ExtraArguments
+  Write-Host "winget \$(\$arguments -join ' ')"
+  \$output = & winget @arguments 2>&1
+  \$exitCode = \$LASTEXITCODE
+  if (\$output) { \$output | ForEach-Object { Write-Host \$_ } }
+  if (\$exitCode -eq 0) { return }
+
+  \$alreadyInstalledCode = \$exitCode -eq -1978335189
+  \$alreadyInstalledText = \$output -match 'existing installed package|installed package|no available upgrade|no newer package versions|no applicable update found|already installed'
+  if (\$alreadyInstalledCode -or \$alreadyInstalledText) {
+    Write-Host "winget reports that \$PackageId is already installed or has no available update. Continuing."
+    return
+  }
+
+  throw "winget install \$PackageId failed with exit code \$exitCode."
+}
+
+function Find-InnoCompiler {
+  \$command = Get-Command 'ISCC.exe' -ErrorAction SilentlyContinue
+  if (\$null -ne \$command) { return \$command.Source }
+
+  \$roots = @(
+    \$env:ProgramFiles,
+    \${env:ProgramFiles(x86)},
+    \$env:LOCALAPPDATA
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace(\$_) }
+
+  foreach (\$root in \$roots) {
+    \$direct = Join-Path \$root 'Inno Setup 6\\ISCC.exe'
+    if (Test-Path \$direct) { return \$direct }
+    \$match = Get-ChildItem -Path \$root -Filter 'ISCC.exe' -Recurse -ErrorAction SilentlyContinue |
+      Where-Object { \$_.FullName -like '*Inno Setup*' } |
+      Select-Object -First 1
+    if (\$null -ne \$match) { return \$match.FullName }
+  }
+
+  return \$null
+}
+
+function Find-VisualStudioBuildTools {
+  \$vswhere = "\${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe"
+  if (Test-Path \$vswhere) {
+    \$installPath = & \$vswhere -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>\$null | Select-Object -First 1
+    if (-not [string]::IsNullOrWhiteSpace(\$installPath)) { return \$installPath.Trim() }
+  }
+  \$msbuild = Get-Command 'MSBuild.exe' -ErrorAction SilentlyContinue
+  if (\$null -ne \$msbuild) { return \$msbuild.Source }
+  return \$null
+}
+
+function Ensure-FlutterSdk {
+  if (Test-CommandAvailable 'flutter') {
+    Write-Host 'Flutter is already available.'
+    return
+  }
+  \$git = Ensure-GitAvailable
+  \$packFoundryRoot = Join-Path \$env:LOCALAPPDATA 'PackFoundry'
+  \$flutterRoot = Join-Path \$packFoundryRoot 'flutter'
+  if (-not (Test-Path \$flutterRoot)) {
+    Write-Step "Downloading Flutter SDK (\$FlutterChannel)"
+    New-Item -ItemType Directory -Force -Path \$packFoundryRoot | Out-Null
+    & \$git clone --depth 1 --branch \$FlutterChannel https://github.com/flutter/flutter.git \$flutterRoot
+    if (\$LASTEXITCODE -ne 0) { throw 'Flutter SDK clone failed.' }
+  }
+  \$flutterBin = Join-Path \$flutterRoot 'bin'
+  \$env:Path = "\$env:Path;\$flutterBin"
+  \$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  if ((\$userPath -split ';') -notcontains \$flutterBin) {
+    [Environment]::SetEnvironmentVariable('Path', "\$userPath;\$flutterBin", 'User')
+  }
+}
+
+Write-Step "Preparing Windows build for \$AppName"
+New-Item -ItemType Directory -Force -Path \$OutputDir | Out-Null
+
+Write-Step 'Checking Flutter SDK'
+Ensure-FlutterSdk
+Invoke-CheckedNative -Executable 'flutter' -Arguments @('--version') -ErrorMessage 'flutter --version failed.'
+Invoke-CheckedNative -Executable 'flutter' -Arguments @('config', '--enable-windows-desktop') -ErrorMessage 'flutter config failed.'
+
+Write-Step 'Checking Windows Developer Mode'
+Ensure-DeveloperMode
+
+Write-Step 'Checking Visual Studio Build Tools'
+if ([string]::IsNullOrWhiteSpace((Find-VisualStudioBuildTools))) {
+  Invoke-WingetInstall -PackageId 'Microsoft.VisualStudio.2022.BuildTools' -ExtraArguments @(
+    '--override', '"--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools;includeRecommended --add Microsoft.VisualStudio.Component.Windows10SDK.19041"'
+  )
+} else {
+  Write-Host 'Visual Studio Build Tools are already installed.'
+}
+
+Write-Step 'Checking Inno Setup'
+\$iscc = Find-InnoCompiler
+if ([string]::IsNullOrWhiteSpace(\$iscc)) {
+  Invoke-WingetInstall -PackageId 'JRSoftware.InnoSetup'
+  \$iscc = Find-InnoCompiler
+}
+if ([string]::IsNullOrWhiteSpace(\$iscc)) { throw 'ISCC.exe was not found after installation.' }
+Write-Host "Inno Setup compiler: \$iscc"
+
+Write-Step 'Resolving Flutter dependencies'
+Push-Location \$ProjectDir
+try {
+  Invoke-CheckedNative -Executable 'flutter' -Arguments @('pub', 'get') -ErrorMessage 'flutter pub get failed.'
+
+  Write-Step 'Building Windows release bundle'
+  Invoke-CheckedNative -Executable 'flutter' -Arguments @('build', 'windows', '--release') -ErrorMessage 'flutter build windows failed.'
+} finally {
+  Pop-Location
+}
+\$releaseDir = Join-Path \$ProjectDir 'build\\windows\\x64\\runner\\Release'
+\$appExe = Get-ChildItem \$releaseDir -Filter '*.exe' | Select-Object -First 1
+if (\$null -eq \$appExe) { throw "No .exe file was found in \$releaseDir" }
+Write-Host "Windows executable: \$(\$appExe.Name)"
+
+Write-Step 'Creating EXE installer with Inno Setup'
+& \$iscc "/DMyAppExeName=\$(\$appExe.Name)" \$InnoScript
+if (\$LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
+
+Write-Step 'Done'
+Write-Host "Installer files are in: \$OutputDir" -ForegroundColor Green
+Get-ChildItem \$OutputDir
+''';
+  }
+
+  String _windowsBuildKitReadme(String appName) {
+    return '''PackFoundry Windows build kit for $appName
+
+1. Copy this folder to Windows 10/11.
+2. Open PowerShell in this folder.
+3. Run:
+
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+   .\\scripts\\build_windows.ps1
+
+The script prints every step, installs missing tools through winget when possible,
+builds the Flutter Windows release bundle, runs Inno Setup and writes the final
+EXE installer into the output folder next to this file.
+
+Required Windows-side tools prepared by the script:
+- Git, if Flutter SDK must be downloaded.
+- Flutter SDK stable channel, stored in %LOCALAPPDATA%\\PackFoundry\\flutter.
+- Visual Studio 2022 Build Tools with C++ workload.
+- Inno Setup 6.
+''';
+  }
+
+  String _innoValue(String value) {
+    return value
+        .replaceAll('"', '\\"')
+        .replaceAll('\r', ' ')
+        .replaceAll('\n', ' ');
+  }
+
+  String _powerShellSingleQuoted(String value) {
+    return value
+        .replaceAll("'", "''")
+        .replaceAll('\r', ' ')
+        .replaceAll('\n', ' ');
   }
 
   Stream<BuildEvent> _createAppImage({
@@ -1252,12 +1801,37 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
     required Directory workspace,
     required Directory outputDirectory,
   }) async* {
-    final docker = await _findExecutable('docker');
-    if (docker == null) {
+    final runtime = await _builderEnvironmentService.resolveRuntime();
+    if (runtime == null) {
       yield const BuildEvent.log(
         BuildLogEntry(
           title: 'deb packaging failed',
-          detail: 'Docker was not found in PATH.',
+          detail: 'Docker or Podman was not found in PATH.',
+          state: BuildLogState.warning,
+        ),
+      );
+      return;
+    }
+
+    final imageStatus = await _builderImageAvailable(
+      runtime,
+      BuilderEnvironment.debBookworm,
+    );
+    if (!imageStatus) {
+      yield BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepDebContainer,
+          state: BuildRoadmapStepState.warning,
+          progress: 100,
+          detail:
+              '${BuilderEnvironment.debBookworm.imageTag} is not installed. Install the DEB builder in Settings first.',
+        ),
+      );
+      yield BuildEvent.log(
+        BuildLogEntry(
+          title: 'deb builder is not installed',
+          detail:
+              'Install ${BuilderEnvironment.debBookworm.imageTag} from Settings to enable reproducible DEB builds.',
           state: BuildLogState.warning,
         ),
       );
@@ -1281,6 +1855,8 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
       '${workspace.path}:/work',
       '-v',
       '${outputDirectory.path}:/out',
+      '-v',
+      '${BuilderEnvironment.debBookworm.cacheVolume}:/root/.pub-cache',
       '-e',
       'PACKFOUNDRY_APP_NAME=${_dockerEnvValue(appName)}',
       '-e',
@@ -1293,7 +1869,7 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
         '-e',
         'PACKFOUNDRY_ICON_PATH=${_dockerEnvValue(iconPath)}',
       ],
-      _debianDockerImage,
+      BuilderEnvironment.debBookworm.imageTag,
       'bash',
       '-lc',
       _debDockerScript,
@@ -1301,14 +1877,15 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
 
     yield BuildEvent.log(
       BuildLogEntry(
-        title: 'Starting Debian container',
-        detail: 'docker run --rm $_debianDockerImage',
+        title: 'Starting Debian builder',
+        detail:
+            '${runtime.name} run --rm ${BuilderEnvironment.debBookworm.imageTag}',
         state: BuildLogState.running,
       ),
     );
 
     final process = await Process.start(
-      docker.path,
+      runtime.executable,
       dockerArguments,
       runInShell: false,
     );
@@ -1408,40 +1985,16 @@ pf_step() {
   printf 'PACKFOUNDRY_STEP|%s|%s|%s\n' "$1" "$2" "$3"
 }
 
-pf_step 62 "Updating Debian package index" "apt-get update inside debian:bookworm."
-apt-get update
-pf_step 66 "Installing Linux build dependencies" "clang, cmake, ninja, GTK and dpkg tools."
-apt-get install -y --no-install-recommends \
-  ca-certificates \
-  clang \
-  cmake \
-  curl \
-  dpkg-dev \
-  file \
-  git \
-  libgtk-3-dev \
-  liblzma-dev \
-  libstdc++-12-dev \
-  ninja-build \
-  pkg-config \
-  unzip \
-  xz-utils \
-  zip
-
-pf_step 70 "Downloading Flutter SDK" "Cloning the stable Flutter channel inside Debian."
-rm -rf /opt/flutter
-git clone --depth 1 --branch stable https://github.com/flutter/flutter.git /opt/flutter
+pf_step 62 "DEB builder ready" "Using cached PackFoundry Debian builder with Flutter SDK and Linux packaging tools."
 export PATH=/opt/flutter/bin:$PATH
 git config --global --add safe.directory /opt/flutter
 git config --global --add safe.directory /work
 
-pf_step 74 "Configuring Flutter Linux desktop" "Enabling Linux desktop support in the container."
-flutter config --enable-linux-desktop
 cd /work
 rm -rf build/linux
-pf_step 78 "Resolving Flutter dependencies" "Running flutter pub get in the copied project."
+pf_step 70 "Resolve Flutter dependencies" "Running flutter pub get with persistent PackFoundry pub-cache."
 flutter pub get
-pf_step 82 "Building Linux release bundle" "Running flutter build linux --release inside Debian."
+pf_step 78 "Compile Debian Linux bundle" "Running flutter build linux --release inside the Debian builder."
 flutter build linux --release
 
 bundle="$(find build/linux -type d -path '*/release/bundle' | head -n 1)"
@@ -1450,7 +2003,7 @@ if [ -z "$bundle" ]; then
   exit 30
 fi
 
-pf_step 86 "Preparing Debian package layout" "Creating DEBIAN/control, desktop entry and icon directories."
+pf_step 86 "Create Debian package layout" "Writing DEBIAN/control, desktop entry and icon files."
 arch="$(dpkg --print-architecture)"
 package_root="/tmp/${PACKFOUNDRY_PACKAGE_NAME}_${PACKFOUNDRY_VERSION}_${arch}"
 rm -rf "$package_root"
@@ -1509,11 +2062,11 @@ else
 EOF
 fi
 
-pf_step 91 "Building .deb archive" "Running dpkg-deb --build."
+pf_step 91 "Build DEB archive" "Running dpkg-deb --build for the package root."
 deb_path="/out/${PACKFOUNDRY_OUTPUT_BASENAME}_${arch}.deb"
 rm -f "$deb_path"
 dpkg-deb --build --root-owner-group "$package_root" "$deb_path"
-pf_step 94 "Debian package exported" "$deb_path"
+pf_step 94 "Export DEB artifact" "$deb_path"
 echo "$deb_path"
 ''';
 
@@ -1643,6 +2196,19 @@ echo "$deb_path"
 
     final debianVersion = version.replaceAll(RegExp(r'[^A-Za-z0-9.+:~_-]'), '');
     return debianVersion.isEmpty ? '1.0.0' : debianVersion;
+  }
+
+  Future<bool> _builderImageAvailable(
+    ContainerRuntime runtime,
+    BuilderEnvironment builder,
+  ) async {
+    final result = await Process.run(
+      runtime.executable,
+      ['image', 'inspect', builder.imageTag],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+    return result.exitCode == 0;
   }
 
   Future<String?> _copyIconIntoWorkspace({

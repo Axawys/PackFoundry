@@ -6,9 +6,11 @@ import 'package:flutter/material.dart';
 import '../../core/models/build_configuration.dart';
 import '../../core/models/build_log_entry.dart';
 import '../../core/models/build_target.dart';
+import '../../core/models/builder_environment.dart';
 import '../../core/models/tool_status.dart';
 import '../../core/services/app_preferences.dart';
 import '../../core/services/build_service.dart';
+import '../../core/services/builder_environment_service.dart';
 import '../../core/services/toolchain_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../widgets/app_settings_panel.dart';
@@ -49,6 +51,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
 
   final _buildService = BuildService();
   final _toolchainService = ToolchainService();
+  final _builderService = BuilderEnvironmentService();
   final _appNameController = TextEditingController(text: _defaultAppName);
   final _widthController = TextEditingController(text: '1280');
   final _heightController = TextEditingController(text: '800');
@@ -65,12 +68,15 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   int _workspaceIndex = 1;
   ToolAvailability _flutterStatus = ToolAvailability.available;
   ToolAvailability _linuxToolchainStatus = ToolAvailability.available;
-  ToolAvailability _dockerStatus = ToolAvailability.available;
+  ToolAvailability _containerRuntimeStatus = ToolAvailability.available;
+  String? _containerRuntimeName;
+  ToolInstallProgress? _installProgress;
+  ToolAvailability _debBuilderStatus = ToolAvailability.available;
+  ToolAvailability _rpmBuilderStatus = ToolAvailability.available;
   ToolAvailability _appImageToolStatus = ToolAvailability.available;
   ToolAvailability _debToolStatus = ToolAvailability.available;
   ToolAvailability _rpmToolStatus = ToolAvailability.available;
-  ToolAvailability _wineStatus = ToolAvailability.available;
-  ToolAvailability _innoSetupStatus = ToolAvailability.available;
+  ToolAvailability _zipToolStatus = ToolAvailability.available;
 
   final List<BuildTarget> _targets = [
     BuildTarget(
@@ -124,15 +130,16 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   }
 
   Future<void> _refreshToolchainStatus() async {
+    final runtime = await _builderService.resolveRuntime();
     final results = await Future.wait([
       _toolchainService.commandAvailability('flutter', ['--version']),
       _linuxToolchainAvailable(),
-      _toolchainService.commandAvailability('docker', ['--version']),
+      _builderService.builderAvailability(BuilderEnvironment.debBookworm),
+      _builderService.builderAvailability(BuilderEnvironment.rpmFedora),
       _toolchainService.appImageToolAvailability(),
       _toolchainService.commandAvailability('dpkg-deb', ['--version']),
       _toolchainService.commandAvailability('rpmbuild', ['--version']),
-      _toolchainService.commandAvailability('wine', ['--version']),
-      _toolchainService.commandAvailability('iscc', ['--version']),
+      _toolchainService.commandAvailability('zip', ['--version']),
     ]);
 
     if (!mounted) {
@@ -142,12 +149,16 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     setState(() {
       _flutterStatus = results[0];
       _linuxToolchainStatus = results[1];
-      _dockerStatus = results[2];
-      _appImageToolStatus = results[3];
-      _debToolStatus = results[4];
-      _rpmToolStatus = results[5];
-      _wineStatus = results[6];
-      _innoSetupStatus = results[7];
+      _containerRuntimeStatus = runtime == null
+          ? ToolAvailability.missing
+          : ToolAvailability.installed;
+      _containerRuntimeName = runtime?.displayName;
+      _debBuilderStatus = results[2];
+      _rpmBuilderStatus = results[3];
+      _appImageToolStatus = results[4];
+      _debToolStatus = results[5];
+      _rpmToolStatus = results[6];
+      _zipToolStatus = results[7];
     });
   }
 
@@ -242,17 +253,17 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
           ]
         : [
             ToolStatus(
-              name: 'Docker',
-              command: 'docker',
-              status: _dockerStatus,
+              name: _containerRuntimeName ?? 'Container runtime',
+              command:
+                  _containerRuntimeName?.toLowerCase() ?? 'docker or podman',
+              status: _containerRuntimeStatus,
               note: l10n.dockerDebNote,
+              showCommand: false,
             ),
             ToolStatus(
               name: 'Debian builder',
-              command: 'debian:bookworm',
-              status: _dockerStatus == ToolAvailability.installed
-                  ? ToolAvailability.installed
-                  : ToolAvailability.available,
+              command: BuilderEnvironment.debBookworm.imageTag,
+              status: _debBuilderStatus,
               note: l10n.debianBuilderNote,
             ),
           ];
@@ -265,6 +276,15 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       status: isNativeDeb ? _nativeDebBuildStatus : _dockerDebBuildStatus,
       tools: tools,
       installTarget: ToolchainInstallTarget.deb,
+      canRemove:
+          !isNativeDeb && _debBuilderStatus == ToolAvailability.installed,
+      installProgress: _installProgress?.target == ToolchainInstallTarget.deb
+          ? _installProgress
+          : null,
+      installSizeLabel:
+          !isNativeDeb && _debBuilderStatus != ToolAvailability.installed
+          ? '~5 GB'
+          : null,
     );
   }
 
@@ -289,6 +309,19 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
           ? _nativeRpmBuildStatus
           : _dockerRpmBuildStatus,
       installTarget: ToolchainInstallTarget.rpm,
+      canRemove:
+          !isNativeRpm &&
+          !unsupportedRpm &&
+          _rpmBuilderStatus == ToolAvailability.installed,
+      installProgress: _installProgress?.target == ToolchainInstallTarget.rpm
+          ? _installProgress
+          : null,
+      installSizeLabel:
+          !isNativeRpm &&
+              !unsupportedRpm &&
+              _rpmBuilderStatus != ToolAvailability.installed
+          ? '~5 GB'
+          : null,
       tools: [
         if (isNativeRpm) ...[
           _hostSystemTool(l10n, distribution),
@@ -310,15 +343,16 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
           ),
         ] else ...[
           ToolStatus(
-            name: 'Docker',
-            command: 'docker',
-            status: _dockerStatus,
+            name: _containerRuntimeName ?? 'Container runtime',
+            command: _containerRuntimeName?.toLowerCase() ?? 'docker or podman',
+            status: _containerRuntimeStatus,
             note: l10n.dockerRpmNote,
+            showCommand: false,
           ),
           ToolStatus(
             name: 'Fedora builder',
-            command: 'fedora container',
-            status: ToolAvailability.available,
+            command: BuilderEnvironment.rpmFedora.imageTag,
+            status: _rpmBuilderStatus,
             note: l10n.rpmBuilderNote,
           ),
         ],
@@ -349,26 +383,30 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     return ToolchainGroup(
       title: l10n.windowsBuildGroupTitle,
       subtitle: l10n.windowsBuildGroupSubtitle,
-      status: ToolAvailability.missing,
+      status: _zipToolStatus == ToolAvailability.installed
+          ? ToolAvailability.installed
+          : ToolAvailability.available,
       installTarget: ToolchainInstallTarget.exe,
+      guideSteps: l10n.windowsBuildKitGuideSteps,
       tools: [
         ToolStatus(
-          name: 'Windows build host',
-          command: 'windows runner toolchain',
-          status: ToolAvailability.missing,
-          note: l10n.windowsBuildHostNote,
+          name: 'zip',
+          command: 'zip',
+          status: _zipToolStatus,
+          note: l10n.windowsZipNote,
         ),
         ToolStatus(
-          name: 'Wine',
-          command: 'wine',
-          status: _wineStatus,
-          note: l10n.wineNote,
+          name: 'Windows 10/11',
+          command: 'real machine or VM',
+          status: ToolAvailability.available,
+          note: l10n.windowsMachineNote,
+          showCommand: false,
         ),
         ToolStatus(
-          name: 'Inno Setup',
-          command: 'iscc.exe',
-          status: _innoSetupStatus,
-          note: l10n.innoSetupNote,
+          name: 'PowerShell build script',
+          command: 'scripts/build_windows.ps1',
+          status: ToolAvailability.installed,
+          note: l10n.windowsBuildScriptNote,
         ),
       ],
     );
@@ -416,9 +454,11 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   }
 
   ToolAvailability get _dockerDebBuildStatus {
-    return _dockerStatus == ToolAvailability.installed
-        ? ToolAvailability.installed
-        : ToolAvailability.available;
+    if (_containerRuntimeStatus == ToolAvailability.installed &&
+        _debBuilderStatus == ToolAvailability.installed) {
+      return ToolAvailability.installed;
+    }
+    return ToolAvailability.available;
   }
 
   ToolAvailability get _nativeRpmBuildStatus {
@@ -431,9 +471,9 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   }
 
   ToolAvailability get _dockerRpmBuildStatus {
-    return _dockerStatus == ToolAvailability.installed
-        ? ToolAvailability.available
-        : ToolAvailability.available;
+    // The Fedora builder can already be installed and managed, but RPM builds
+    // are still wired through the host packager until container RPM export lands.
+    return ToolAvailability.available;
   }
 
   ToolAvailability get _appImageBuildStatus {
@@ -556,6 +596,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
 
     setState(() {
       _installingToolTarget = target;
+      _installProgress = null;
     });
 
     final l10n = context.l10n;
@@ -567,6 +608,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
 
     setState(() {
       _installingToolTarget = null;
+      _installProgress = null;
     });
 
     final messenger = ScaffoldMessenger.of(context);
@@ -585,6 +627,66 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     }
   }
 
+  Future<void> _cancelToolInstall() async {
+    await _builderService.cancelActiveInstall();
+  }
+
+  Future<void> _removeTools(ToolchainInstallTarget target) async {
+    if (_installingToolTarget != null) {
+      return;
+    }
+
+    setState(() {
+      _installingToolTarget = target;
+      _installProgress = null;
+    });
+
+    final l10n = context.l10n;
+    final result = await _runToolRemove(target);
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _installingToolTarget = null;
+      _installProgress = null;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.success
+              ? l10n.toolRemoveSuccess(result.message)
+              : l10n.toolRemoveFailed(result.message),
+        ),
+      ),
+    );
+
+    if (result.success && widget.enableToolchainDiagnostics) {
+      await _refreshToolchainStatus();
+    }
+  }
+
+  Future<ToolInstallResult> _runToolRemove(
+    ToolchainInstallTarget target,
+  ) async {
+    return switch (target) {
+      ToolchainInstallTarget.rpm => _builderService.removeBuilder(
+        BuilderEnvironment.rpmFedora,
+      ),
+      ToolchainInstallTarget.deb => _builderService.removeBuilder(
+        BuilderEnvironment.debBookworm,
+      ),
+      ToolchainInstallTarget.appImage => const ToolInstallResult.failure(
+        'AppImageTool removal is not implemented yet.',
+      ),
+      ToolchainInstallTarget.exe => ToolInstallResult.failure(
+        context.l10n.exeInstallUnsupported,
+      ),
+    };
+  }
+
   Future<ToolInstallResult> _runToolInstall(
     ToolchainInstallTarget target,
   ) async {
@@ -593,9 +695,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       ToolchainInstallTarget.rpm => _installRpmTools(distribution),
       ToolchainInstallTarget.deb => _installDebTools(distribution),
       ToolchainInstallTarget.appImage => _installAppImageTools(distribution),
-      ToolchainInstallTarget.exe => ToolInstallResult.failure(
-        context.l10n.exeInstallUnsupported,
-      ),
+      ToolchainInstallTarget.exe => _installWindowsTools(distribution),
     };
   }
 
@@ -617,7 +717,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       );
     }
 
-    return _installDockerTools();
+    return _installBuilderEnvironment(BuilderEnvironment.rpmFedora);
   }
 
   Future<ToolInstallResult> _installDebTools(_HostDistribution distribution) {
@@ -638,7 +738,20 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       );
     }
 
-    return _installDockerTools();
+    return _installBuilderEnvironment(BuilderEnvironment.debBookworm);
+  }
+
+  Future<ToolInstallResult> _installWindowsTools(
+    _HostDistribution distribution,
+  ) {
+    return _toolchainService.installSystemPackages(
+      packagesByManager: const {
+        'dnf': ['zip'],
+        'apt-get': ['zip'],
+        'zypper': ['zip'],
+        'pacman': ['zip'],
+      },
+    );
   }
 
   Future<ToolInstallResult> _installAppImageTools(
@@ -678,6 +791,42 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       );
     }
     return appImageToolResult;
+  }
+
+  Future<ToolInstallResult> _installBuilderEnvironment(
+    BuilderEnvironment builder,
+  ) async {
+    if (_containerRuntimeStatus != ToolAvailability.installed) {
+      final runtimeResult = await _installDockerTools();
+      if (!runtimeResult.success) {
+        return runtimeResult;
+      }
+    }
+
+    ToolInstallResult? result;
+    await for (final event in _builderService.installBuilder(builder)) {
+      final eventResult = event.result;
+      if (eventResult != null) {
+        result = eventResult;
+        continue;
+      }
+      if (!mounted) {
+        continue;
+      }
+      setState(() {
+        _installProgress = ToolInstallProgress(
+          target: builder.id == BuilderEnvironmentId.debBookworm
+              ? ToolchainInstallTarget.deb
+              : ToolchainInstallTarget.rpm,
+          progress: event.progress ?? 0,
+          remainingSeconds: event.remainingSeconds ?? 0,
+          detail: event.detail ?? '',
+        );
+      });
+    }
+
+    return result ??
+        const ToolInstallResult.failure('Builder installation did not finish.');
   }
 
   Future<ToolInstallResult> _installDockerTools() {
@@ -976,6 +1125,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
               onThemeModeChanged: widget.onThemeModeChanged,
               onLocaleModeChanged: widget.onLocaleModeChanged,
               onInstallTools: _installTools,
+              onRemoveTools: _removeTools,
+              onCancelInstall: _cancelToolInstall,
               onChooseProject: _chooseProjectFolder,
               onChooseIcon: _chooseIconFile,
               onChooseOutput: _chooseOutputFolder,
@@ -1086,6 +1237,8 @@ class _WorkspaceContent extends StatelessWidget {
     required this.onThemeModeChanged,
     required this.onLocaleModeChanged,
     required this.onInstallTools,
+    required this.onRemoveTools,
+    required this.onCancelInstall,
     required this.onChooseProject,
     required this.onChooseIcon,
     required this.onChooseOutput,
@@ -1113,6 +1266,8 @@ class _WorkspaceContent extends StatelessWidget {
   final ValueChanged<ThemeMode> onThemeModeChanged;
   final ValueChanged<AppLocaleMode> onLocaleModeChanged;
   final ValueChanged<ToolchainInstallTarget> onInstallTools;
+  final ValueChanged<ToolchainInstallTarget> onRemoveTools;
+  final VoidCallback onCancelInstall;
   final VoidCallback onChooseProject;
   final VoidCallback onChooseIcon;
   final VoidCallback onChooseOutput;
@@ -1127,6 +1282,8 @@ class _WorkspaceContent extends StatelessWidget {
           groups: toolGroups,
           installingTarget: installingToolTarget,
           onInstallTools: onInstallTools,
+          onRemoveTools: onRemoveTools,
+          onCancelInstall: onCancelInstall,
         ),
         const SizedBox(height: 16),
         PreferencesPanel(

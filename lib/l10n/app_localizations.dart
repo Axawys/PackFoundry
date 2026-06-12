@@ -50,6 +50,7 @@ class AppLocalizations {
   String get dontShowAgain =>
       _isRu ? 'Больше не показывать' : 'Do not show again';
   String get startUsing => _isRu ? 'Начать' : 'Start';
+  String get cancel => _isRu ? 'Отменить' : 'Cancel';
   String get readyTitle => _isRu ? 'Готово' : 'Ready';
   String get readyDetail => _isRu
       ? 'Выберите проект и нужные установщики, чтобы начать.'
@@ -93,6 +94,17 @@ class AppLocalizations {
   String get installMissingTools =>
       _isRu ? 'Установить недостающие инструменты' : 'Install missing tools';
   String get installingTools => _isRu ? 'Установка...' : 'Installing...';
+  String get removeBuilder => _isRu ? 'Удалить builder' : 'Remove builder';
+  String builderInstallSize(String size) {
+    return _isRu ? 'Размер: $size' : 'Size: $size';
+  }
+
+  String builderInstallProgress(int progress) {
+    return _isRu
+        ? 'Установка builder: $progress%'
+        : 'Builder install: $progress%';
+  }
+
   String toolInstallSuccess(String detail) {
     return _isRu
         ? 'Инструменты установлены. $detail'
@@ -105,9 +117,19 @@ class AppLocalizations {
         : 'Could not install tools. $detail';
   }
 
+  String toolRemoveSuccess(String detail) {
+    return _isRu ? 'Инструменты удалены. $detail' : 'Tools removed. $detail';
+  }
+
+  String toolRemoveFailed(String detail) {
+    return _isRu
+        ? 'Не удалось удалить инструменты. $detail'
+        : 'Could not remove tools. $detail';
+  }
+
   String get exeInstallUnsupported => _isRu
-      ? 'EXE-сборка требует Windows build host или будущий remote builder.'
-      : 'EXE builds require a Windows build host or a future remote builder.';
+      ? 'EXE-сборка экспортируется как Windows build kit zip.'
+      : 'EXE builds are exported as a Windows build kit zip.';
   String get rpmHostInstallUnsupported => _isRu
       ? 'Host rpm-сборка для этой rpm-based системы пока отключена из-за несовместимости с Fedora/RHEL пакетами.'
       : 'Host rpm builds for this rpm-based system are disabled until Fedora/RHEL package compatibility is handled.';
@@ -146,8 +168,8 @@ class AppLocalizations {
       ? 'Сборка переносимого AppImage для Linux.'
       : 'Build a portable AppImage for Linux.';
   String get windowsBuildGroupSubtitle => _isRu
-      ? 'Сборка EXE требует Windows build host или будущий remote builder.'
-      : 'EXE builds require a Windows build host or a future remote builder.';
+      ? 'PackFoundry создаёт zip-набор: проект, Inno Setup config и скрипт сборки для Windows.'
+      : 'PackFoundry creates a zip kit with the project, Inno Setup config and Windows build script.';
   String get hostSystemToolName => _isRu ? 'Система хоста' : 'Host system';
   String get hostSystemToolNote => _isRu
       ? 'Определяет, какие пакеты можно собрать нативно без контейнера.'
@@ -174,32 +196,51 @@ class AppLocalizations {
       ? 'Нужен для сборки пакетов в контейнерах, например deb на Fedora.'
       : 'Required for container builds, such as deb packaging on Fedora.';
   String get dockerDebNote => _isRu
-      ? 'Нужен для deb-сборки на не-Debian системах.'
-      : 'Required for deb packaging on non-Debian systems.';
+      ? 'Нужен для запуска управляемого DEB builder окружения.'
+      : 'Required to run the managed DEB builder environment.';
   String get dockerRpmNote => _isRu
-      ? 'Будет нужен для rpm-сборки вне Fedora/RHEL-like систем.'
-      : 'Will be required for rpm packaging outside Fedora/RHEL-like systems.';
+      ? 'Нужен для запуска управляемого RPM builder окружения.'
+      : 'Required to run the managed RPM builder environment.';
   String get debianBuilderNote => _isRu
-      ? 'Образ скачивается Docker автоматически при первой deb-сборке.'
-      : 'Docker downloads this image automatically on the first deb build.';
+      ? 'PackFoundry собирает этот образ один раз: Debian, Flutter SDK и инструменты deb-сборки остаются в кеше до удаления.'
+      : 'PackFoundry builds this image once: Debian, Flutter SDK and deb packaging tools stay cached until removed.';
   String get rpmBuilderNote => _isRu
-      ? 'Будущий контейнер для сборки rpm вне Fedora/RHEL окружения.'
-      : 'Future container builder for rpm outside Fedora/RHEL environments.';
+      ? 'PackFoundry builder на Fedora с Flutter SDK и rpm-build для воспроизводимой rpm-сборки.'
+      : 'PackFoundry Fedora builder with Flutter SDK and rpm-build for reproducible rpm packaging.';
   String get dpkgDebNote => _isRu
       ? 'Создаёт deb-пакет на Debian/Ubuntu-like хостах.'
       : 'Creates deb packages on Debian/Ubuntu-like hosts.';
   String get rpmBuildToolNote => _isRu
       ? 'Создаёт rpm-пакет на Fedora/RHEL-like хостах.'
       : 'Creates rpm packages on Fedora/RHEL-like hosts.';
-  String get windowsBuildHostNote => _isRu
-      ? 'Flutter Windows build требует Windows toolchain; Wine сам по себе этого не заменяет.'
-      : 'Flutter Windows builds require the Windows toolchain; Wine alone does not replace it.';
-  String get wineNote => _isRu
-      ? 'Может пригодиться для запуска упаковщика, но не заменяет Windows build host.'
-      : 'May help run a packager, but does not replace a Windows build host.';
+  String get miniGuide => _isRu ? 'Мини-инструкция' : 'Mini guide';
+  List<String> get windowsBuildKitGuideSteps => _isRu
+      ? const [
+          'Во вкладке Project выберите Windows / Inno Setup exe, затем во вкладке Build соберите пакеты.',
+          'В папке экспорта появится *_windows_build_kit.zip. Скопируйте его в Windows 10/11 или Windows VM.',
+          r'Распакуйте архив, откройте PowerShell в распакованной папке и запустите: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; .\scripts\build_windows.ps1',
+          'Скрипт сам проверит Flutter, Visual Studio Build Tools, Inno Setup и Developer Mode. Если попросит включить Developer Mode, включите его и запустите скрипт снова.',
+          'Готовый EXE-установщик появится в папке output рядом со скриптом.',
+        ]
+      : const [
+          'In Project, select Windows / Inno Setup exe, then build packages from the Build workspace.',
+          'The export folder will contain *_windows_build_kit.zip. Copy it to Windows 10/11 or a Windows VM.',
+          r'Extract the archive, open PowerShell in the extracted folder and run: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; .\scripts\build_windows.ps1',
+          'The script checks Flutter, Visual Studio Build Tools, Inno Setup and Developer Mode. If it asks for Developer Mode, enable it and run the script again.',
+          'The final EXE installer appears in the output folder next to the script.',
+        ];
+  String get windowsZipNote => _isRu
+      ? 'Нужен на Linux-хосте, чтобы создать переносимый Windows build kit архив.'
+      : 'Required on the Linux host to create a transferable Windows build kit archive.';
+  String get windowsMachineNote => _isRu
+      ? 'Пользователь переносит zip в настоящую Windows или VM. Внутри не нужны сетевые пробросы и агент.'
+      : 'The user moves the zip to a real Windows machine or VM. No port forwarding or agent is needed.';
+  String get windowsBuildScriptNote => _isRu
+      ? 'Скрипт внутри zip проверит и установит Flutter SDK, Visual Studio Build Tools и Inno Setup, затем соберёт EXE.'
+      : 'The script inside the zip checks and installs Flutter SDK, Visual Studio Build Tools and Inno Setup, then builds the EXE.';
   String get innoSetupNote => _isRu
-      ? 'Упаковывает уже собранное Windows-приложение в установщик.'
-      : 'Packages an already-built Windows app into an installer.';
+      ? 'Упаковывает уже собранное Windows-приложение в EXE-установщик.'
+      : 'Packages an already-built Windows app into an EXE installer.';
   String get androidSdkNote => _isRu
       ? 'Включает сборку APK и AAB артефактов.'
       : 'Enables APK and AAB release artifacts.';
@@ -311,6 +352,7 @@ class AppLocalizations {
       'deb-container' => _isRu ? 'DEB контейнер' : 'DEB container',
       'deb-build' => _isRu ? 'DEB сборка' : 'DEB build',
       'deb-package' => _isRu ? 'DEB пакет' : 'DEB package',
+      'windows-kit' => _isRu ? 'WINDOWS KIT' : 'WINDOWS KIT',
       'summary' => _isRu ? 'Экспорт' : 'Export',
       'cleanup' => _isRu ? 'Очистка' : 'Cleanup',
       _ => fallback,
@@ -349,24 +391,28 @@ class AppLocalizations {
             : 'Archive the Linux release bundle.',
       'deb-container' =>
         _isRu
-            ? 'Запуск Debian Docker builder и установка инструментов сборки.'
-            : 'Start Debian Docker builder and install build tools.',
+            ? 'Запуск кешированного Debian builder окружения.'
+            : 'Start the cached Debian builder environment.',
       'deb-build' =>
         _isRu
-            ? 'Сборка Linux release bundle внутри Debian.'
-            : 'Build the Linux release bundle inside Debian.',
+            ? 'Получение зависимостей и сборка внутри кешированного builder.'
+            : 'Resolve dependencies and compile inside the cached builder.',
       'deb-package' =>
         _isRu
             ? 'Создание DEBIAN/control и запуск dpkg-deb.'
             : 'Create DEBIAN/control and run dpkg-deb.',
+      'windows-kit' =>
+        _isRu
+            ? 'Создание zip-набора для сборки EXE на Windows.'
+            : 'Create a zip kit for building the EXE on Windows.',
       'summary' =>
         _isRu
             ? 'Проверка и вывод списка созданных артефактов.'
             : 'Verify and report generated artifacts.',
       'cleanup' =>
         _isRu
-            ? 'Удаление временных рабочих папок. Docker-сборки могут создавать много файлов.'
-            : 'Remove temporary workspaces. Docker builds may contain many generated files.',
+            ? 'Удаление временных рабочих папок. Тяжёлые кеши builder остаются отдельно.'
+            : 'Remove temporary workspaces. Builder builds keep heavy caches outside this folder.',
       _ => fallback,
     };
   }
@@ -421,6 +467,28 @@ class AppLocalizations {
       'Creating DEBIAN/control, desktop entry and icon directories.' =>
         'Создаём DEBIAN/control, desktop-файл и папки для иконок.',
       'Running dpkg-deb --build.' => 'Запускаем dpkg-deb --build.',
+      'Preparing transferable Windows build kit zip.' =>
+        'Готовим переносимый Windows build kit zip.',
+      'Copying project and writing Windows helper files.' =>
+        'Копируем проект и записываем вспомогательные Windows-файлы.',
+      'Compressing Windows build kit zip.' =>
+        'Упаковываем Windows build kit в zip.',
+      'Using cached PackFoundry Debian builder with Flutter SDK and Linux packaging tools.' =>
+        'Используем кешированный PackFoundry Debian builder с Flutter SDK и инструментами упаковки Linux.',
+      'Running flutter pub get with persistent PackFoundry pub-cache.' =>
+        'Запускаем flutter pub get с постоянным PackFoundry pub-cache.',
+      'Running flutter build linux --release inside the Debian builder.' =>
+        'Запускаем flutter build linux --release внутри Debian builder.',
+      'Writing DEBIAN/control, desktop entry and icon files.' =>
+        'Записываем DEBIAN/control, desktop-файл и файлы иконок.',
+      'Running dpkg-deb --build for the package root.' =>
+        'Запускаем dpkg-deb --build для корня пакета.',
+      'Using PackFoundry DEB builder image with Flutter SDK and Linux dependencies already installed.' =>
+        'Используем PackFoundry DEB builder image, где Flutter SDK и Linux-зависимости уже установлены.',
+      'Running flutter pub get with the persistent PackFoundry pub-cache volume.' =>
+        'Запускаем flutter pub get с постоянным PackFoundry pub-cache volume.',
+      'Running flutter build linux --release inside the cached Debian builder.' =>
+        'Запускаем flutter build linux --release внутри кешированного Debian builder.',
       _ => detail,
     };
   }
@@ -486,6 +554,10 @@ class AppLocalizations {
         _isRu
             ? 'PackFoundry создаёт структуру Debian-пакета: DEBIAN/control, /opt с приложением, desktop-файл и иконки. Затем dpkg-deb собирает итоговый .deb.'
             : 'PackFoundry creates the Debian package layout: DEBIAN/control, /opt app files, desktop file, and icons. Then dpkg-deb builds the final .deb.',
+      'windows-kit' =>
+        _isRu
+            ? 'PackFoundry складывает во временную папку копию проекта, настройки Inno Setup, выбранную иконку и PowerShell-скрипт. Затем всё упаковывается в zip, который можно перенести в Windows и запустить без сетевой настройки VM.'
+            : 'PackFoundry puts a project copy, Inno Setup config, selected icon and PowerShell script into a temporary folder. Then it zips everything so it can be moved to Windows and run without VM network setup.',
       'summary' =>
         _isRu
             ? 'На этом этапе PackFoundry подтверждает, что выбранные артефакты записаны в папку экспорта, и завершает общий прогресс сборки.'

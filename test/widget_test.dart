@@ -143,7 +143,7 @@ void main() {
     expect(find.text('Очистка'), findsOneWidget);
     expect(
       find.text(
-        'Удаление временных рабочих папок. Docker-сборки могут создавать много файлов.',
+        'Удаление временных рабочих папок. Тяжёлые кеши builder остаются отдельно.',
       ),
       findsOneWidget,
     );
