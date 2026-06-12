@@ -1,0 +1,109 @@
+import 'package:flutter/material.dart';
+
+import '../../core/services/app_preferences.dart';
+import '../../l10n/app_localizations.dart';
+import 'section.dart';
+
+class PreferencesPanel extends StatelessWidget {
+  const PreferencesPanel({
+    required this.themeMode,
+    required this.localeMode,
+    required this.onThemeModeChanged,
+    required this.onLocaleModeChanged,
+    super.key,
+  });
+
+  final ThemeMode themeMode;
+  final AppLocaleMode localeMode;
+  final ValueChanged<ThemeMode> onThemeModeChanged;
+  final ValueChanged<AppLocaleMode> onLocaleModeChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+
+    return Section(
+      title: l10n.preferences,
+      icon: Icons.tune_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _PreferenceRow(
+            label: l10n.themeChoice,
+            child: SegmentedButton<ThemeMode>(
+              segments: [
+                ButtonSegment(
+                  value: ThemeMode.system,
+                  icon: const Icon(Icons.brightness_auto_outlined),
+                  label: Text(l10n.themeSystem),
+                ),
+                ButtonSegment(
+                  value: ThemeMode.light,
+                  icon: const Icon(Icons.light_mode_outlined),
+                  label: Text(l10n.themeLight),
+                ),
+                ButtonSegment(
+                  value: ThemeMode.dark,
+                  icon: const Icon(Icons.dark_mode_outlined),
+                  label: Text(l10n.themeDark),
+                ),
+              ],
+              selected: {themeMode},
+              onSelectionChanged: (selection) =>
+                  onThemeModeChanged(selection.single),
+            ),
+          ),
+          const SizedBox(height: 14),
+          _PreferenceRow(
+            label: l10n.languageChoice,
+            child: SegmentedButton<AppLocaleMode>(
+              segments: [
+                ButtonSegment(
+                  value: AppLocaleMode.system,
+                  icon: const Icon(Icons.language_outlined),
+                  label: Text(l10n.languageSystem),
+                ),
+                ButtonSegment(
+                  value: AppLocaleMode.english,
+                  icon: const Text('EN'),
+                  label: Text(l10n.languageEnglish),
+                ),
+                ButtonSegment(
+                  value: AppLocaleMode.russian,
+                  icon: const Text('RU'),
+                  label: Text(l10n.languageRussian),
+                ),
+              ],
+              selected: {localeMode},
+              onSelectionChanged: (selection) =>
+                  onLocaleModeChanged(selection.single),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PreferenceRow extends StatelessWidget {
+  const _PreferenceRow({required this.label, required this.child});
+
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 12,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        SizedBox(
+          width: 150,
+          child: Text(label, style: Theme.of(context).textTheme.titleSmall),
+        ),
+        child,
+      ],
+    );
+  }
+}

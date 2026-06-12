@@ -7,6 +7,19 @@ import '../models/build_log_entry.dart';
 import '../models/build_target.dart';
 
 class BuildService {
+  static const _stepProject = 'project';
+  static const _stepWorkspace = 'workspace';
+  static const _stepLocalBuild = 'local-build';
+  static const _stepBundle = 'bundle';
+  static const _stepRpm = 'rpm';
+  static const _stepAppImage = 'appimage';
+  static const _stepTarGz = 'targz';
+  static const _stepDebContainer = 'deb-container';
+  static const _stepDebBuild = 'deb-build';
+  static const _stepDebPackage = 'deb-package';
+  static const _stepSummary = 'summary';
+  static const _stepCleanup = 'cleanup';
+
   static const _appImageToolBaseUrl =
       'https://github.com/AppImage/AppImageKit/releases/download/continuous';
   static const _debianDockerImage = 'debian:bookworm';
@@ -50,9 +63,20 @@ class BuildService {
         .where((target) => target.platform == 'Linux')
         .toList();
 
+    yield BuildEvent.roadmapPlan(_createRoadmapPlan(linuxTargets));
+
     Directory? buildTempDirectory;
+    var dockerTouchedWorkspace = false;
 
     try {
+      yield const BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepProject,
+          state: BuildRoadmapStepState.running,
+          progress: 25,
+          detail: 'Checking project folder and pubspec.yaml.',
+        ),
+      );
       yield BuildEvent.log(
         BuildLogEntry(
           title: 'Analyzing project',
@@ -62,6 +86,14 @@ class BuildService {
       );
 
       await outputDirectory.create(recursive: true);
+      yield const BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepProject,
+          state: BuildRoadmapStepState.success,
+          progress: 100,
+          detail: 'Project metadata and output folder are ready.',
+        ),
+      );
       yield BuildEvent.log(
         BuildLogEntry(
           title: 'Output folder is ready',
@@ -96,6 +128,14 @@ class BuildService {
       }
 
       yield const BuildEvent.progress(10);
+      yield const BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepWorkspace,
+          state: BuildRoadmapStepState.running,
+          progress: 20,
+          detail: 'Copying project into a disposable workspace.',
+        ),
+      );
       yield const BuildEvent.log(
         BuildLogEntry(
           title: 'Preparing temporary build workspace',
@@ -111,6 +151,14 @@ class BuildService {
       );
       buildTempDirectory = buildWorkspaceInfo.tempDirectory;
       final workspace = buildWorkspaceInfo.workspace;
+      yield const BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepWorkspace,
+          state: BuildRoadmapStepState.success,
+          progress: 100,
+          detail: 'Temporary project copy is ready.',
+        ),
+      );
 
       final debTargets = linuxTargets
           .where((target) => target.artifact == 'deb package')
@@ -121,6 +169,14 @@ class BuildService {
 
       if (localLinuxTargets.isNotEmpty) {
         yield const BuildEvent.progress(15);
+        yield const BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepLocalBuild,
+            state: BuildRoadmapStepState.running,
+            progress: 10,
+            detail: 'Running flutter build linux --release.',
+          ),
+        );
         yield const BuildEvent.log(
           BuildLogEntry(
             title: 'Running Flutter release build',
@@ -131,6 +187,14 @@ class BuildService {
 
         final buildResult = await _runFlutterBuild(workspace.path);
         if (buildResult.exitCode != 0) {
+          yield BuildEvent.roadmapUpdate(
+            BuildRoadmapUpdate(
+              id: _stepLocalBuild,
+              state: BuildRoadmapStepState.warning,
+              progress: 100,
+              detail: _shortProcessOutput(buildResult),
+            ),
+          );
           yield BuildEvent.log(
             BuildLogEntry(
               title: 'Flutter build failed',
@@ -142,6 +206,22 @@ class BuildService {
         }
 
         yield const BuildEvent.progress(55);
+        yield const BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepLocalBuild,
+            state: BuildRoadmapStepState.success,
+            progress: 100,
+            detail: 'Linux release bundle was compiled.',
+          ),
+        );
+        yield const BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepBundle,
+            state: BuildRoadmapStepState.running,
+            progress: 40,
+            detail: 'Looking for release/bundle and executable file.',
+          ),
+        );
         yield BuildEvent.log(
           BuildLogEntry(
             title: 'Flutter build completed',
@@ -152,6 +232,14 @@ class BuildService {
 
         final bundleDirectory = await _findLinuxBundle(workspace);
         if (bundleDirectory == null) {
+          yield const BuildEvent.roadmapUpdate(
+            BuildRoadmapUpdate(
+              id: _stepBundle,
+              state: BuildRoadmapStepState.warning,
+              progress: 100,
+              detail: 'Expected build/linux/<arch>/release/bundle.',
+            ),
+          );
           yield const BuildEvent.log(
             BuildLogEntry(
               title: 'Linux bundle not found',
@@ -163,6 +251,15 @@ class BuildService {
           return;
         }
 
+        yield const BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepBundle,
+            state: BuildRoadmapStepState.success,
+            progress: 100,
+            detail: 'Bundle and executable are ready for packaging.',
+          ),
+        );
+
         yield* _exportLinuxTargets(
           configuration: configuration,
           targets: localLinuxTargets,
@@ -173,6 +270,15 @@ class BuildService {
 
       if (debTargets.isNotEmpty) {
         yield const BuildEvent.progress(60);
+        yield const BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepDebContainer,
+            state: BuildRoadmapStepState.running,
+            progress: 10,
+            detail: 'Starting Debian Docker builder.',
+          ),
+        );
+        dockerTouchedWorkspace = true;
         yield const BuildEvent.log(
           BuildLogEntry(
             title: 'Packaging deb in Docker',
@@ -188,6 +294,14 @@ class BuildService {
         );
       }
 
+      yield const BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepSummary,
+          state: BuildRoadmapStepState.success,
+          progress: 100,
+          detail: 'Selected artifacts were written to the export folder.',
+        ),
+      );
       yield const BuildEvent.progress(100);
       yield BuildEvent.log(
         BuildLogEntry(
@@ -214,9 +328,215 @@ class BuildService {
       );
     } finally {
       if (buildTempDirectory != null && buildTempDirectory.existsSync()) {
-        await buildTempDirectory.delete(recursive: true);
+        yield const BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepCleanup,
+            state: BuildRoadmapStepState.running,
+            progress: 40,
+            detail:
+                'Removing temporary Flutter and packaging workspaces. Docker builds can leave a large cache here.',
+          ),
+        );
+        final cleanupResult = await _deleteTemporaryDirectory(
+          buildTempDirectory,
+          takeOwnership: dockerTouchedWorkspace,
+        );
+        yield BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepCleanup,
+            state: cleanupResult.deleted
+                ? BuildRoadmapStepState.success
+                : BuildRoadmapStepState.warning,
+            progress: 100,
+            detail: cleanupResult.message,
+          ),
+        );
       }
     }
+  }
+
+  List<BuildRoadmapStep> _createRoadmapPlan(List<BuildTarget> linuxTargets) {
+    final hasDeb = linuxTargets.any(
+      (target) => target.artifact == 'deb package',
+    );
+    final hasRpm = linuxTargets.any(
+      (target) => target.artifact == 'rpm package',
+    );
+    final hasAppImage = linuxTargets.any(
+      (target) => target.artifact == 'AppImage',
+    );
+    final hasTarGz = linuxTargets.any(
+      (target) => target.artifact == 'tar.gz bundle',
+    );
+    final hasLocalBuild = hasRpm || hasAppImage || hasTarGz;
+    var number = 1;
+
+    BuildRoadmapStep step({
+      required String id,
+      required String title,
+      required String description,
+      required int estimatedSeconds,
+    }) {
+      return BuildRoadmapStep(
+        id: id,
+        number: number++,
+        title: title,
+        description: description,
+        state: BuildRoadmapStepState.pending,
+        estimatedSeconds: estimatedSeconds,
+      );
+    }
+
+    return [
+      step(
+        id: _stepProject,
+        title: 'Project',
+        description: 'Check pubspec.yaml, app metadata and export folder.',
+        estimatedSeconds: 3,
+      ),
+      step(
+        id: _stepWorkspace,
+        title: 'Workspace',
+        description:
+            'Copy the project and apply settings without touching sources.',
+        estimatedSeconds: 8,
+      ),
+      if (hasLocalBuild) ...[
+        step(
+          id: _stepLocalBuild,
+          title: 'Flutter build',
+          description: 'Compile the Linux release bundle on the host.',
+          estimatedSeconds: 120,
+        ),
+        step(
+          id: _stepBundle,
+          title: 'Linux bundle',
+          description: 'Find the release bundle and executable file.',
+          estimatedSeconds: 5,
+        ),
+      ],
+      if (hasRpm)
+        step(
+          id: _stepRpm,
+          title: 'RPM',
+          description: 'Generate spec metadata and run rpmbuild.',
+          estimatedSeconds: 25,
+        ),
+      if (hasAppImage)
+        step(
+          id: _stepAppImage,
+          title: 'APPIMAGE',
+          description:
+              'Create AppDir, AppRun and package it with appimagetool.',
+          estimatedSeconds: 25,
+        ),
+      if (hasTarGz)
+        step(
+          id: _stepTarGz,
+          title: 'TAR.GZ',
+          description: 'Archive the Linux release bundle.',
+          estimatedSeconds: 10,
+        ),
+      if (hasDeb) ...[
+        step(
+          id: _stepDebContainer,
+          title: 'DEB container',
+          description: 'Start Debian Docker builder and install build tools.',
+          estimatedSeconds: 180,
+        ),
+        step(
+          id: _stepDebBuild,
+          title: 'DEB build',
+          description: 'Build the Linux release bundle inside Debian.',
+          estimatedSeconds: 180,
+        ),
+        step(
+          id: _stepDebPackage,
+          title: 'DEB package',
+          description: 'Create DEBIAN/control and run dpkg-deb.',
+          estimatedSeconds: 30,
+        ),
+      ],
+      step(
+        id: _stepSummary,
+        title: 'Export',
+        description: 'Verify and report generated artifacts.',
+        estimatedSeconds: 3,
+      ),
+      step(
+        id: _stepCleanup,
+        title: 'Cleanup',
+        description:
+            'Remove temporary workspaces. Docker builds may contain many generated files.',
+        estimatedSeconds: hasDeb ? 180 : 15,
+      ),
+    ];
+  }
+
+  Future<_CleanupResult> _deleteTemporaryDirectory(
+    Directory directory, {
+    required bool takeOwnership,
+  }) async {
+    if (!directory.existsSync()) {
+      return const _CleanupResult(
+        deleted: true,
+        message: 'Temporary files were already removed.',
+      );
+    }
+
+    if (Platform.isLinux || Platform.isMacOS) {
+      if (takeOwnership) {
+        await _tryTakeOwnershipOfTemporaryDirectory(directory);
+      }
+      final result = await Process.run('rm', ['-rf', directory.path]);
+      if (result.exitCode == 0 || !directory.existsSync()) {
+        return const _CleanupResult(
+          deleted: true,
+          message: 'Temporary files were removed.',
+        );
+      }
+    }
+
+    try {
+      await directory.delete(recursive: true);
+      return const _CleanupResult(
+        deleted: true,
+        message: 'Temporary files were removed.',
+      );
+    } on FileSystemException catch (error) {
+      return _CleanupResult(
+        deleted: false,
+        message:
+            'Build is finished, but temporary files could not be removed automatically: ${error.message}.',
+      );
+    }
+  }
+
+  Future<void> _tryTakeOwnershipOfTemporaryDirectory(
+    Directory directory,
+  ) async {
+    final docker = await _findExecutable('docker');
+    if (docker == null) {
+      return;
+    }
+
+    final userId = (await Process.run('id', ['-u'])).stdout.toString().trim();
+    final groupId = (await Process.run('id', ['-g'])).stdout.toString().trim();
+    if (userId.isEmpty || groupId.isEmpty) {
+      return;
+    }
+
+    await Process.run(docker.path, [
+      'run',
+      '--rm',
+      '-v',
+      '${directory.path}:/cleanup',
+      _debianDockerImage,
+      'chown',
+      '-R',
+      '$userId:$groupId',
+      '/cleanup',
+    ]);
   }
 
   Future<_BuildWorkspace> _createBuildWorkspace({
@@ -332,6 +652,14 @@ class BuildService {
       final target = targets[index];
 
       if (target.artifact == 'AppImage') {
+        yield const BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepAppImage,
+            state: BuildRoadmapStepState.running,
+            progress: 15,
+            detail: 'Preparing AppDir and appimagetool package.',
+          ),
+        );
         yield const BuildEvent.log(
           BuildLogEntry(
             title: 'Packaging AppImage',
@@ -345,6 +673,14 @@ class BuildService {
           outputDirectory: outputDirectory,
         );
       } else if (target.artifact == 'rpm package') {
+        yield const BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepRpm,
+            state: BuildRoadmapStepState.running,
+            progress: 15,
+            detail: 'Preparing rpmbuild tree and package metadata.',
+          ),
+        );
         yield const BuildEvent.log(
           BuildLogEntry(
             title: 'Packaging RPM',
@@ -358,6 +694,14 @@ class BuildService {
           outputDirectory: outputDirectory,
         );
       } else if (target.artifact == 'tar.gz bundle') {
+        yield const BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepTarGz,
+            state: BuildRoadmapStepState.running,
+            progress: 30,
+            detail: 'Creating compressed release bundle.',
+          ),
+        );
         yield* _createTarGzBundle(
           appName: configuration.appName,
           bundleDirectory: bundleDirectory,
@@ -460,6 +804,14 @@ class BuildService {
       );
 
       if (result.exitCode != 0 || !appImageFile.existsSync()) {
+        yield BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepAppImage,
+            state: BuildRoadmapStepState.warning,
+            progress: 100,
+            detail: _shortProcessOutput(result),
+          ),
+        );
         yield BuildEvent.log(
           BuildLogEntry(
             title: 'AppImage packaging failed',
@@ -471,6 +823,14 @@ class BuildService {
       }
 
       await _makeExecutable(appImageFile);
+      yield BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepAppImage,
+          state: BuildRoadmapStepState.success,
+          progress: 100,
+          detail: appImagePath,
+        ),
+      );
       yield BuildEvent.log(
         BuildLogEntry(
           title: 'Created AppImage',
@@ -525,6 +885,14 @@ class BuildService {
     );
 
     if (archiveResult.exitCode == 0) {
+      yield BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepTarGz,
+          state: BuildRoadmapStepState.success,
+          progress: 100,
+          detail: archivePath,
+        ),
+      );
       yield BuildEvent.log(
         BuildLogEntry(
           title: 'Created Linux tar.gz',
@@ -637,6 +1005,14 @@ Terminal=false
       );
 
       if (result.exitCode != 0) {
+        yield BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepRpm,
+            state: BuildRoadmapStepState.warning,
+            progress: 100,
+            detail: _shortProcessOutput(result),
+          ),
+        );
         yield BuildEvent.log(
           BuildLogEntry(
             title: 'RPM packaging failed',
@@ -670,6 +1046,14 @@ Terminal=false
       }
       await rpmFile.copy(outputFile.path);
 
+      yield BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepRpm,
+          state: BuildRoadmapStepState.success,
+          progress: 100,
+          detail: outputFile.path,
+        ),
+      );
       yield BuildEvent.log(
         BuildLogEntry(
           title: 'Created RPM package',
@@ -931,6 +1315,7 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
     final outputTail = _OutputTail(maxLines: 80);
     final outputLines = _processLines(process);
     String? debPath;
+    String? activeDebRoadmapStepId;
 
     await for (final line in outputLines) {
       outputTail.add(line.line);
@@ -940,6 +1325,27 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
       }
 
       yield BuildEvent.progress(debStep.progress);
+      final roadmapStepId = _debRoadmapStepId(debStep.progress);
+      if (activeDebRoadmapStepId != null &&
+          activeDebRoadmapStepId != roadmapStepId) {
+        yield BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: activeDebRoadmapStepId,
+            state: BuildRoadmapStepState.success,
+            progress: 100,
+            detail: 'Step completed.',
+          ),
+        );
+      }
+      activeDebRoadmapStepId = roadmapStepId;
+      yield BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: roadmapStepId,
+          state: BuildRoadmapStepState.running,
+          progress: _debRoadmapProgress(debStep.progress),
+          detail: debStep.detail,
+        ),
+      );
       yield BuildEvent.log(
         BuildLogEntry(
           title: debStep.title,
@@ -954,6 +1360,16 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
 
     final exitCode = await process.exitCode;
     if (exitCode != 0) {
+      yield BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepDebPackage,
+          state: BuildRoadmapStepState.warning,
+          progress: 100,
+          detail: outputTail.text.isEmpty
+              ? 'Docker exited with code $exitCode.'
+              : outputTail.text,
+        ),
+      );
       yield BuildEvent.log(
         BuildLogEntry(
           title: 'deb packaging failed',
@@ -966,6 +1382,14 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
       return;
     }
 
+    yield BuildEvent.roadmapUpdate(
+      BuildRoadmapUpdate(
+        id: _stepDebPackage,
+        state: BuildRoadmapStepState.success,
+        progress: 100,
+        detail: debPath ?? '${_safeFileName(appName)}_$version.deb',
+      ),
+    );
     yield BuildEvent.progress(95);
     yield BuildEvent.log(
       BuildLogEntry(
@@ -1155,6 +1579,26 @@ echo "$deb_path"
         );
 
     return controller.stream;
+  }
+
+  String _debRoadmapStepId(int debProgress) {
+    if (debProgress < 78) {
+      return _stepDebContainer;
+    }
+    if (debProgress < 86) {
+      return _stepDebBuild;
+    }
+    return _stepDebPackage;
+  }
+
+  int _debRoadmapProgress(int debProgress) {
+    if (debProgress < 78) {
+      return ((debProgress - 60).clamp(0, 18) / 18 * 100).round();
+    }
+    if (debProgress < 86) {
+      return ((debProgress - 78).clamp(0, 8) / 8 * 100).round();
+    }
+    return ((debProgress - 86).clamp(0, 8) / 8 * 100).round();
   }
 
   _DebProgressStep? _parseDebProgressLine(String line) {
@@ -1559,6 +2003,13 @@ class _OutputTail {
   String get text => _lines.join('\n');
 }
 
+class _CleanupResult {
+  const _CleanupResult({required this.deleted, required this.message});
+
+  final bool deleted;
+  final String message;
+}
+
 class _BuildWorkspace {
   const _BuildWorkspace({required this.tempDirectory, required this.workspace});
 
@@ -1567,10 +2018,28 @@ class _BuildWorkspace {
 }
 
 class BuildEvent {
-  const BuildEvent.log(BuildLogEntry this.logEntry) : progress = null;
+  const BuildEvent.log(BuildLogEntry this.logEntry)
+    : progress = null,
+      roadmapPlan = null,
+      roadmapUpdate = null;
 
-  const BuildEvent.progress(int this.progress) : logEntry = null;
+  const BuildEvent.progress(int this.progress)
+    : logEntry = null,
+      roadmapPlan = null,
+      roadmapUpdate = null;
+
+  const BuildEvent.roadmapPlan(List<BuildRoadmapStep> this.roadmapPlan)
+    : logEntry = null,
+      progress = null,
+      roadmapUpdate = null;
+
+  const BuildEvent.roadmapUpdate(BuildRoadmapUpdate this.roadmapUpdate)
+    : logEntry = null,
+      progress = null,
+      roadmapPlan = null;
 
   final BuildLogEntry? logEntry;
   final int? progress;
+  final List<BuildRoadmapStep>? roadmapPlan;
+  final BuildRoadmapUpdate? roadmapUpdate;
 }

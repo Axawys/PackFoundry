@@ -22,6 +22,7 @@ class PackFoundryApp extends StatefulWidget {
 class _PackFoundryAppState extends State<PackFoundryApp> {
   final _preferences = AppPreferences();
   ThemeMode _themeMode = ThemeMode.system;
+  AppLocaleMode _localeMode = AppLocaleMode.system;
   bool _showWelcome = false;
   bool _settingsLoaded = false;
 
@@ -39,6 +40,7 @@ class _PackFoundryAppState extends State<PackFoundryApp> {
 
     setState(() {
       _themeMode = settings.themeMode;
+      _localeMode = settings.localeMode;
       _showWelcome = settings.showWelcome;
       _settingsLoaded = true;
     });
@@ -49,6 +51,13 @@ class _PackFoundryAppState extends State<PackFoundryApp> {
       _themeMode = themeMode;
     });
     await _preferences.saveThemeMode(themeMode);
+  }
+
+  Future<void> _setLocaleMode(AppLocaleMode localeMode) async {
+    setState(() {
+      _localeMode = localeMode;
+    });
+    await _preferences.saveLocaleMode(localeMode);
   }
 
   Future<void> _completeWelcome({required bool hideWelcome}) async {
@@ -68,6 +77,7 @@ class _PackFoundryAppState extends State<PackFoundryApp> {
       title: 'PackFoundry',
       debugShowCheckedModeBanner: false,
       themeMode: _themeMode,
+      locale: _localeMode.locale,
       theme: _buildTheme(Brightness.light),
       darkTheme: _buildTheme(Brightness.dark),
       localizationsDelegates: const [
@@ -79,8 +89,10 @@ class _PackFoundryAppState extends State<PackFoundryApp> {
       supportedLocales: AppLocalizations.supportedLocales,
       home: PackFoundryHomePage(
         themeMode: _themeMode,
+        localeMode: _localeMode,
         showWelcome: _settingsLoaded && _showWelcome,
         onThemeModeChanged: _setThemeMode,
+        onLocaleModeChanged: _setLocaleMode,
         onWelcomeCompleted: _completeWelcome,
         enableToolchainDiagnostics: widget.enableToolchainDiagnostics,
       ),

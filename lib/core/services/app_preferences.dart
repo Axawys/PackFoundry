@@ -3,12 +3,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class AppPreferences {
   static const _themeModeKey = 'themeMode';
+  static const _localeModeKey = 'localeMode';
   static const _hideWelcomeKey = 'hideWelcome';
 
   Future<AppSettings> load() async {
     final preferences = await SharedPreferences.getInstance();
     return AppSettings(
       themeMode: _themeModeFromName(preferences.getString(_themeModeKey)),
+      localeMode: _localeModeFromName(preferences.getString(_localeModeKey)),
       showWelcome: !(preferences.getBool(_hideWelcomeKey) ?? false),
     );
   }
@@ -16,6 +18,11 @@ class AppPreferences {
   Future<void> saveThemeMode(ThemeMode themeMode) async {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setString(_themeModeKey, themeMode.name);
+  }
+
+  Future<void> saveLocaleMode(AppLocaleMode localeMode) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_localeModeKey, localeMode.name);
   }
 
   Future<void> saveHideWelcome(bool hideWelcome) async {
@@ -30,11 +37,38 @@ class AppPreferences {
       _ => ThemeMode.system,
     };
   }
+
+  AppLocaleMode _localeModeFromName(String? name) {
+    return switch (name) {
+      'english' => AppLocaleMode.english,
+      'russian' => AppLocaleMode.russian,
+      _ => AppLocaleMode.system,
+    };
+  }
+}
+
+enum AppLocaleMode {
+  system,
+  english,
+  russian;
+
+  Locale? get locale {
+    return switch (this) {
+      AppLocaleMode.system => null,
+      AppLocaleMode.english => const Locale('en'),
+      AppLocaleMode.russian => const Locale('ru'),
+    };
+  }
 }
 
 class AppSettings {
-  const AppSettings({required this.themeMode, required this.showWelcome});
+  const AppSettings({
+    required this.themeMode,
+    required this.localeMode,
+    required this.showWelcome,
+  });
 
   final ThemeMode themeMode;
+  final AppLocaleMode localeMode;
   final bool showWelcome;
 }

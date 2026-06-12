@@ -25,18 +25,23 @@ class AppSettingsPanel extends StatelessWidget {
       title: l10n.applicationSettings,
       icon: Icons.tune_outlined,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
+            alignment: WrapAlignment.start,
+            spacing: 12,
+            runSpacing: 12,
             children: [
-              Expanded(
+              SizedBox(
+                width: 150,
                 child: TextField(
                   controller: widthController,
                   keyboardType: TextInputType.number,
                   decoration: InputDecoration(labelText: l10n.windowWidth),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
+              SizedBox(
+                width: 150,
                 child: TextField(
                   controller: heightController,
                   keyboardType: TextInputType.number,
@@ -91,14 +96,14 @@ class _PathPickerRow extends StatelessWidget {
           child: Icon(icon),
         ),
         const SizedBox(width: 12),
-        Expanded(
-          child: Text(path ?? placeholder, overflow: TextOverflow.ellipsis),
-        ),
-        const SizedBox(width: 12),
         OutlinedButton.icon(
           onPressed: onPressed,
           icon: Icon(buttonIcon),
           label: Text(buttonLabel),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(path ?? placeholder, overflow: TextOverflow.ellipsis),
         ),
       ],
     );

@@ -7,31 +7,36 @@ import '../../core/models/build_configuration.dart';
 import '../../core/models/build_log_entry.dart';
 import '../../core/models/build_target.dart';
 import '../../core/models/tool_status.dart';
+import '../../core/services/app_preferences.dart';
 import '../../core/services/build_service.dart';
 import '../../core/services/toolchain_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../widgets/app_settings_panel.dart';
 import '../widgets/build_destination_panel.dart';
 import '../widgets/build_panel.dart';
+import '../widgets/preferences_panel.dart';
 import '../widgets/project_panel.dart';
 import '../widgets/targets_panel.dart';
-import '../widgets/theme_settings_panel.dart';
 import '../widgets/toolchain_panel.dart';
 import '../widgets/welcome_dialog.dart';
 
 class PackFoundryHomePage extends StatefulWidget {
   const PackFoundryHomePage({
     required this.themeMode,
+    required this.localeMode,
     required this.showWelcome,
     required this.onThemeModeChanged,
+    required this.onLocaleModeChanged,
     required this.onWelcomeCompleted,
     required this.enableToolchainDiagnostics,
     super.key,
   });
 
   final ThemeMode themeMode;
+  final AppLocaleMode localeMode;
   final bool showWelcome;
   final ValueChanged<ThemeMode> onThemeModeChanged;
+  final ValueChanged<AppLocaleMode> onLocaleModeChanged;
   final WelcomeCompleted onWelcomeCompleted;
   final bool enableToolchainDiagnostics;
 
@@ -48,6 +53,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   final _widthController = TextEditingController(text: '1280');
   final _heightController = TextEditingController(text: '800');
   final _buildLog = <BuildLogEntry>[];
+  final _roadmapSteps = <BuildRoadmapStep>[];
 
   String? _projectPath;
   String? _iconPath;
@@ -71,13 +77,11 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       platform: 'Linux',
       artifact: 'AppImage',
       status: TargetStatus.ready,
-      selected: true,
     ),
     BuildTarget(
       platform: 'Linux',
       artifact: 'deb package',
       status: TargetStatus.ready,
-      selected: true,
     ),
     BuildTarget(
       platform: 'Linux',
@@ -716,6 +720,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       _isBuilding = true;
       _buildProgress = 0;
       _buildLog.clear();
+      _roadmapSteps.clear();
     });
 
     final configuration = BuildConfiguration(
@@ -736,11 +741,21 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       setState(() {
         final logEntry = event.logEntry;
         final progress = event.progress;
+        final roadmapPlan = event.roadmapPlan;
+        final roadmapUpdate = event.roadmapUpdate;
         if (logEntry != null) {
           _buildLog.add(logEntry);
         }
         if (progress != null) {
           _buildProgress = progress.clamp(0, 100);
+        }
+        if (roadmapPlan != null) {
+          _roadmapSteps
+            ..clear()
+            ..addAll(roadmapPlan);
+        }
+        if (roadmapUpdate != null) {
+          _applyRoadmapUpdate(roadmapUpdate);
         }
       });
     }
@@ -751,6 +766,18 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     setState(() {
       _isBuilding = false;
     });
+  }
+
+  void _applyRoadmapUpdate(BuildRoadmapUpdate update) {
+    final index = _roadmapSteps.indexWhere((step) => step.id == update.id);
+    if (index == -1) {
+      return;
+    }
+    _roadmapSteps[index] = _roadmapSteps[index].copyWith(
+      state: update.state,
+      progress: update.progress,
+      detail: update.detail,
+    );
   }
 
   Future<void> _chooseProjectFolder() async {
@@ -931,6 +958,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
             final content = _WorkspaceContent(
               index: _workspaceIndex,
               themeMode: widget.themeMode,
+              localeMode: widget.localeMode,
               toolGroups: toolGroups,
               installingToolTarget: _installingToolTarget,
               projectPath: _projectPath,
@@ -943,8 +971,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
               selectedTargets: selectedTargets,
               isBuilding: _isBuilding,
               progress: _buildProgress,
+              roadmapSteps: _roadmapSteps,
               log: _buildLog,
               onThemeModeChanged: widget.onThemeModeChanged,
+              onLocaleModeChanged: widget.onLocaleModeChanged,
               onInstallTools: _installTools,
               onChooseProject: _chooseProjectFolder,
               onChooseIcon: _chooseIconFile,
@@ -1038,6 +1068,7 @@ class _WorkspaceContent extends StatelessWidget {
   const _WorkspaceContent({
     required this.index,
     required this.themeMode,
+    required this.localeMode,
     required this.toolGroups,
     required this.installingToolTarget,
     required this.projectPath,
@@ -1050,8 +1081,10 @@ class _WorkspaceContent extends StatelessWidget {
     required this.selectedTargets,
     required this.isBuilding,
     required this.progress,
+    required this.roadmapSteps,
     required this.log,
     required this.onThemeModeChanged,
+    required this.onLocaleModeChanged,
     required this.onInstallTools,
     required this.onChooseProject,
     required this.onChooseIcon,
@@ -1062,6 +1095,7 @@ class _WorkspaceContent extends StatelessWidget {
 
   final int index;
   final ThemeMode themeMode;
+  final AppLocaleMode localeMode;
   final List<ToolchainGroup> toolGroups;
   final ToolchainInstallTarget? installingToolTarget;
   final String? projectPath;
@@ -1074,8 +1108,10 @@ class _WorkspaceContent extends StatelessWidget {
   final int selectedTargets;
   final bool isBuilding;
   final int progress;
+  final List<BuildRoadmapStep> roadmapSteps;
   final List<BuildLogEntry> log;
   final ValueChanged<ThemeMode> onThemeModeChanged;
+  final ValueChanged<AppLocaleMode> onLocaleModeChanged;
   final ValueChanged<ToolchainInstallTarget> onInstallTools;
   final VoidCallback onChooseProject;
   final VoidCallback onChooseIcon;
@@ -1087,12 +1123,17 @@ class _WorkspaceContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final children = switch (index) {
       0 => [
-        ThemeSettingsPanel(themeMode: themeMode, onChanged: onThemeModeChanged),
-        const SizedBox(height: 16),
         ToolchainPanel(
           groups: toolGroups,
           installingTarget: installingToolTarget,
           onInstallTools: onInstallTools,
+        ),
+        const SizedBox(height: 16),
+        PreferencesPanel(
+          themeMode: themeMode,
+          localeMode: localeMode,
+          onThemeModeChanged: onThemeModeChanged,
+          onLocaleModeChanged: onLocaleModeChanged,
         ),
       ],
       1 => [
@@ -1121,6 +1162,7 @@ class _WorkspaceContent extends StatelessWidget {
           selectedTargets: selectedTargets,
           isBuilding: isBuilding,
           progress: progress,
+          roadmapSteps: roadmapSteps,
           log: log,
           onBuild: onBuild,
         ),
