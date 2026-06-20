@@ -113,6 +113,63 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsNothing);
   });
 
+  testWidgets('remembers release metadata fields', (tester) async {
+    Finder field(String label) {
+      return find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.labelText == label,
+      );
+    }
+
+    await tester.pumpWidget(
+      const PackFoundryApp(enableToolchainDiagnostics: false),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await tester.enterText(field('Release tag'), 'v2.3.0');
+    await tester.enterText(field('Developer email'), 'dev@example.com');
+    await tester.enterText(field('Developer / publisher'), 'Example Studio');
+    await tester.enterText(field('Project homepage'), 'https://example.com');
+    await tester.enterText(field('Package description'), 'Saved description');
+    await tester.pump(const Duration(milliseconds: 450));
+    await tester.pumpAndSettle();
+
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString('releaseTag'), 'v2.3.0');
+    expect(preferences.getString('developerEmail'), 'dev@example.com');
+    expect(preferences.getString('publisherName'), 'Example Studio');
+    expect(preferences.getString('homepageUrl'), 'https://example.com');
+    expect(preferences.getString('projectDescription'), 'Saved description');
+
+    await tester.pumpWidget(
+      PackFoundryApp(key: UniqueKey(), enableToolchainDiagnostics: false),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      tester.widget<TextField>(field('Release tag')).controller?.text,
+      'v2.3.0',
+    );
+    expect(
+      tester.widget<TextField>(field('Developer email')).controller?.text,
+      'dev@example.com',
+    );
+    expect(
+      tester.widget<TextField>(field('Developer / publisher')).controller?.text,
+      'Example Studio',
+    );
+    expect(
+      tester.widget<TextField>(field('Project homepage')).controller?.text,
+      'https://example.com',
+    );
+    expect(
+      tester.widget<TextField>(field('Package description')).controller?.text,
+      'Saved description',
+    );
+  });
+
   testWidgets('shows welcome dialog by default', (tester) async {
     SharedPreferences.setMockInitialValues({});
 

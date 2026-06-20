@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
@@ -52,6 +53,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   final _buildService = BuildService();
   final _toolchainService = ToolchainService();
   final _builderService = BuilderEnvironmentService();
+  final _appPreferences = AppPreferences();
   final _appNameController = TextEditingController(text: _defaultAppName);
   final _releaseTagController = TextEditingController();
   final _developerEmailController = TextEditingController();
@@ -64,6 +66,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   final _buildLog = <BuildLogEntry>[];
   final _roadmapSteps = <BuildRoadmapStep>[];
   final _projectChecks = <ProjectCheck>[];
+  Timer? _metadataSaveTimer;
+  bool _metadataListenersAttached = false;
 
   String? _projectPath;
   String? _iconPath;
@@ -132,9 +136,71 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   @override
   void initState() {
     super.initState();
+    _loadReleaseMetadata();
     if (widget.enableToolchainDiagnostics) {
       _refreshToolchainStatus();
     }
+  }
+
+  Future<void> _loadReleaseMetadata() async {
+    final metadata = await _appPreferences.loadReleaseMetadata();
+    if (!mounted) {
+      return;
+    }
+
+    _restoreControllerText(_releaseTagController, metadata.releaseTag);
+    _restoreControllerText(_developerEmailController, metadata.developerEmail);
+    _restoreControllerText(_publisherNameController, metadata.publisherName);
+    _restoreControllerText(_homepageUrlController, metadata.homepageUrl);
+    _restoreControllerText(_descriptionController, metadata.description);
+    _attachMetadataListeners();
+  }
+
+  void _restoreControllerText(
+    TextEditingController controller,
+    String savedValue,
+  ) {
+    if (controller.text.isEmpty && savedValue.isNotEmpty) {
+      controller.text = savedValue;
+    }
+  }
+
+  void _attachMetadataListeners() {
+    if (_metadataListenersAttached) {
+      return;
+    }
+    for (final controller in _metadataControllers) {
+      controller.addListener(_scheduleReleaseMetadataSave);
+    }
+    _metadataListenersAttached = true;
+  }
+
+  List<TextEditingController> get _metadataControllers => [
+    _releaseTagController,
+    _developerEmailController,
+    _publisherNameController,
+    _homepageUrlController,
+    _descriptionController,
+  ];
+
+  void _scheduleReleaseMetadataSave() {
+    _metadataSaveTimer?.cancel();
+    _metadataSaveTimer = Timer(
+      const Duration(milliseconds: 400),
+      _saveReleaseMetadata,
+    );
+  }
+
+  Future<void> _saveReleaseMetadata() {
+    return _appPreferences.saveReleaseMetadata(
+      SavedReleaseMetadata(
+        releaseTag: _releaseTagController.text,
+        developerEmail: _developerEmailController.text,
+        publisherName: _publisherNameController.text,
+        homepageUrl: _homepageUrlController.text,
+        description: _descriptionController.text,
+      ),
+    );
   }
 
   Future<void> _refreshToolchainStatus() async {
@@ -896,6 +962,15 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
 
   @override
   void dispose() {
+    if (_metadataListenersAttached) {
+      for (final controller in _metadataControllers) {
+        controller.removeListener(_scheduleReleaseMetadataSave);
+      }
+    }
+    if (_metadataSaveTimer?.isActive ?? false) {
+      unawaited(_saveReleaseMetadata());
+    }
+    _metadataSaveTimer?.cancel();
     _appNameController.dispose();
     _releaseTagController.dispose();
     _developerEmailController.dispose();

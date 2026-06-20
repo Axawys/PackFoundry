@@ -5,6 +5,11 @@ class AppPreferences {
   static const _themeModeKey = 'themeMode';
   static const _localeModeKey = 'localeMode';
   static const _hideWelcomeKey = 'hideWelcome';
+  static const _releaseTagKey = 'releaseTag';
+  static const _developerEmailKey = 'developerEmail';
+  static const _publisherNameKey = 'publisherName';
+  static const _homepageUrlKey = 'homepageUrl';
+  static const _projectDescriptionKey = 'projectDescription';
 
   Future<AppSettings> load() async {
     final preferences = await SharedPreferences.getInstance();
@@ -28,6 +33,28 @@ class AppPreferences {
   Future<void> saveHideWelcome(bool hideWelcome) async {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setBool(_hideWelcomeKey, hideWelcome);
+  }
+
+  Future<SavedReleaseMetadata> loadReleaseMetadata() async {
+    final preferences = await SharedPreferences.getInstance();
+    return SavedReleaseMetadata(
+      releaseTag: preferences.getString(_releaseTagKey) ?? '',
+      developerEmail: preferences.getString(_developerEmailKey) ?? '',
+      publisherName: preferences.getString(_publisherNameKey) ?? '',
+      homepageUrl: preferences.getString(_homepageUrlKey) ?? '',
+      description: preferences.getString(_projectDescriptionKey) ?? '',
+    );
+  }
+
+  Future<void> saveReleaseMetadata(SavedReleaseMetadata metadata) async {
+    final preferences = await SharedPreferences.getInstance();
+    await Future.wait([
+      preferences.setString(_releaseTagKey, metadata.releaseTag),
+      preferences.setString(_developerEmailKey, metadata.developerEmail),
+      preferences.setString(_publisherNameKey, metadata.publisherName),
+      preferences.setString(_homepageUrlKey, metadata.homepageUrl),
+      preferences.setString(_projectDescriptionKey, metadata.description),
+    ]);
   }
 
   ThemeMode _themeModeFromName(String? name) {
@@ -71,4 +98,20 @@ class AppSettings {
   final ThemeMode themeMode;
   final AppLocaleMode localeMode;
   final bool showWelcome;
+}
+
+class SavedReleaseMetadata {
+  const SavedReleaseMetadata({
+    required this.releaseTag,
+    required this.developerEmail,
+    required this.publisherName,
+    required this.homepageUrl,
+    required this.description,
+  });
+
+  final String releaseTag;
+  final String developerEmail;
+  final String publisherName;
+  final String homepageUrl;
+  final String description;
 }
