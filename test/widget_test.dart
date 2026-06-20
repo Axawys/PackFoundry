@@ -4,6 +4,8 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:pack_foundry/core/models/build_log_entry.dart';
+import 'package:pack_foundry/core/models/build_target.dart';
+import 'package:pack_foundry/core/services/build_service.dart';
 import 'package:pack_foundry/l10n/app_localizations.dart';
 import 'package:pack_foundry/main.dart';
 import 'package:pack_foundry/ui/widgets/build_panel.dart';
@@ -41,6 +43,74 @@ void main() {
       find.widgetWithText(FilledButton, 'Build installers'),
       findsOneWidget,
     );
+  });
+
+  test('creates a pending roadmap preview from selected targets', () {
+    final targets = [
+      BuildTarget(
+        platform: 'Linux',
+        artifact: 'AppImage',
+        status: TargetStatus.ready,
+        selected: true,
+      ),
+      BuildTarget(
+        platform: 'Linux',
+        artifact: 'deb package',
+        status: TargetStatus.ready,
+        selected: true,
+      ),
+      BuildTarget(
+        platform: 'Linux',
+        artifact: 'rpm package',
+        status: TargetStatus.ready,
+      ),
+    ];
+
+    final steps = BuildService().createRoadmapPlan(targets);
+
+    expect(
+      steps.map((step) => step.id),
+      containsAll(<String>[
+        'project',
+        'workspace',
+        'local-build',
+        'bundle',
+        'appimage',
+        'deb-container',
+        'deb-build',
+        'deb-package',
+        'summary',
+        'cleanup',
+      ]),
+    );
+    expect(steps.map((step) => step.id), isNot(contains('rpm')));
+    expect(
+      steps.every((step) => step.state == BuildRoadmapStepState.pending),
+      isTrue,
+    );
+  });
+
+  testWidgets('shows roadmap before starting the selected build', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const PackFoundryApp(enableToolchainDiagnostics: false),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final appImageTarget = find.text('Linux AppImage');
+    await tester.ensureVisible(appImageTarget);
+    await tester.tap(appImageTarget);
+    await tester.pump();
+
+    await tester.tap(find.text('Build'));
+    await tester.pump();
+
+    expect(find.text('APPIMAGE'), findsOneWidget);
+    expect(find.text('Flutter build'), findsOneWidget);
+    expect(find.text('Linux bundle'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
   });
 
   testWidgets('shows welcome dialog by default', (tester) async {

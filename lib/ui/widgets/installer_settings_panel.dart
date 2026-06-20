@@ -57,17 +57,39 @@ class InstallerSettingsPanel extends StatelessWidget {
             color: Theme.of(context).colorScheme.outlineVariant,
           ),
           const SizedBox(height: 8),
-          for (final target in targets)
-            CheckboxListTile(
-              value: target.selected,
-              onChanged: target.canSelect
-                  ? (value) => onChanged(target, value ?? false)
-                  : null,
-              secondary: Icon(_targetIcon(target)),
-              title: Text(l10n.targetTitle(target.platform, target.artifact)),
-              subtitle: Text(l10n.targetStatusLabel(target.status.name)),
-              contentPadding: EdgeInsets.zero,
-            ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = switch (constraints.maxWidth) {
+                >= 1000 => 4,
+                >= 560 => 2,
+                _ => 1,
+              };
+              const spacing = 10.0;
+              final itemWidth =
+                  (constraints.maxWidth - spacing * (columns - 1)) / columns;
+
+              return Wrap(
+                spacing: spacing,
+                runSpacing: spacing,
+                children: [
+                  for (final target in targets)
+                    SizedBox(
+                      width: itemWidth,
+                      child: _InstallerTargetTile(
+                        target: target,
+                        icon: _targetIcon(target),
+                        title: l10n.targetTitle(
+                          target.platform,
+                          target.artifact,
+                        ),
+                        subtitle: l10n.targetStatusLabel(target.status.name),
+                        onChanged: (selected) => onChanged(target, selected),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
         ],
       ),
     );
@@ -83,5 +105,89 @@ class InstallerSettingsPanel extends StatelessWidget {
       _ when target.artifact.contains('tar.gz') => Icons.archive_outlined,
       _ => Icons.inventory_2_outlined,
     };
+  }
+}
+
+class _InstallerTargetTile extends StatelessWidget {
+  const _InstallerTargetTile({
+    required this.target,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onChanged,
+  });
+
+  final BuildTarget target;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final enabled = target.canSelect;
+
+    return Material(
+      color: target.selected
+          ? colorScheme.primaryContainer.withValues(alpha: 0.45)
+          : colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(
+          color: target.selected
+              ? colorScheme.primary.withValues(alpha: 0.65)
+              : colorScheme.outlineVariant,
+        ),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: enabled ? () => onChanged(!target.selected) : null,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                color: enabled
+                    ? colorScheme.onSurfaceVariant
+                    : colorScheme.onSurface.withValues(alpha: 0.38),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: enabled
+                            ? colorScheme.onSurfaceVariant
+                            : colorScheme.onSurface.withValues(alpha: 0.38),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Checkbox(
+                value: target.selected,
+                onChanged: enabled
+                    ? (value) => onChanged(value ?? false)
+                    : null,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

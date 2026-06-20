@@ -53,6 +53,7 @@ static void my_application_activate(GApplication* application) {
   }
 
   gtk_window_set_default_size(window, 1280, 720);
+  gtk_window_set_icon_name(window, "packfoundry");
 
   g_autofree gchar* executable_path = g_file_read_link("/proc/self/exe", nullptr);
   if (executable_path != nullptr) {
@@ -146,11 +147,9 @@ static void my_application_class_init(MyApplicationClass* klass) {
 static void my_application_init(MyApplication* self) {}
 
 MyApplication* my_application_new() {
-  // Set the program name to the application ID, which helps various systems
-  // like GTK and desktop environments map this running application to its
-  // corresponding .desktop file. This ensures better integration by allowing
-  // the application to be recognized beyond its binary name.
-  g_set_prgname(APPLICATION_ID);
+  // Match the desktop file generated for PackFoundry packages so taskbars can
+  // associate the running window with the installed application icon.
+  g_set_prgname("packfoundry");
 
   return MY_APPLICATION(g_object_new(my_application_get_type(),
                                      "application-id", APPLICATION_ID, "flags",

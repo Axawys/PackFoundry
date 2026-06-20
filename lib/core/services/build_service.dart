@@ -70,12 +70,7 @@ class BuildService {
         .where((target) => target.platform == 'Windows')
         .toList();
 
-    yield BuildEvent.roadmapPlan(
-      _createRoadmapPlan(
-        linuxTargets: linuxTargets,
-        windowsTargets: windowsTargets,
-      ),
-    );
+    yield BuildEvent.roadmapPlan(createRoadmapPlan(selectedTargets));
 
     Directory? buildTempDirectory;
     var dockerTouchedWorkspace = false;
@@ -265,6 +260,10 @@ class BuildService {
           );
           return;
         }
+        await _copySelectedIconToLinuxBundle(
+          bundleDirectory: bundleDirectory,
+          iconPath: configuration.iconPath,
+        );
 
         yield const BuildEvent.roadmapUpdate(
           BuildRoadmapUpdate(
@@ -393,6 +392,23 @@ class BuildService {
         );
       }
     }
+  }
+
+  List<BuildRoadmapStep> createRoadmapPlan(Iterable<BuildTarget> targets) {
+    final selectedTargets = targets.where((target) => target.selected);
+    final linuxTargets = selectedTargets
+        .where((target) => target.platform == 'Linux')
+        .toList();
+    final windowsTargets = selectedTargets
+        .where((target) => target.platform == 'Windows')
+        .toList();
+    if (linuxTargets.isEmpty && windowsTargets.isEmpty) {
+      return const [];
+    }
+    return _createRoadmapPlan(
+      linuxTargets: linuxTargets,
+      windowsTargets: windowsTargets,
+    );
   }
 
   List<BuildRoadmapStep> _createRoadmapPlan({
@@ -604,6 +620,7 @@ class BuildService {
     final workspace = Directory(_joinPath(tempRoot.path, 'project'));
     await _copyProjectDirectory(projectDirectory, workspace);
     await _applyWindowSizeOverrides(workspace, configuration);
+    await _applyIconOverrides(workspace, configuration);
     return _BuildWorkspace(tempDirectory: tempRoot, workspace: workspace);
   }
 
@@ -653,6 +670,95 @@ class BuildService {
 
     await _patchLinuxWindowSize(workspace, width, height);
     await _patchWindowsWindowSize(workspace, width, height);
+  }
+
+  Future<void> _applyIconOverrides(
+    Directory workspace,
+    BuildConfiguration configuration,
+  ) async {
+    final appName = configuration.appName.trim().isEmpty
+        ? 'Flutter App'
+        : configuration.appName.trim();
+    final packageName = _slugify(appName);
+    final desktopFileId = _linuxDesktopFileId(appName);
+    await _patchLinuxApplicationId(workspace, desktopFileId);
+    await _patchLinuxWindowIcon(
+      workspace: workspace,
+      iconName: desktopFileId,
+      windowClass: packageName,
+    );
+  }
+
+  Future<void> _patchLinuxApplicationId(
+    Directory workspace,
+    String applicationId,
+  ) async {
+    final file = File(_joinPath(workspace.path, 'linux/CMakeLists.txt'));
+    if (!file.existsSync()) {
+      return;
+    }
+
+    final content = await file.readAsString();
+    final updated = content.replaceFirst(
+      RegExp(r'set\s*\(\s*APPLICATION_ID\s+"[^"]*"\s*\)'),
+      'set(APPLICATION_ID "${_cStringLiteral(applicationId)}")',
+    );
+    if (updated != content) {
+      await file.writeAsString(updated);
+    }
+  }
+
+  Future<void> _patchLinuxWindowIcon({
+    required Directory workspace,
+    required String iconName,
+    required String windowClass,
+  }) async {
+    final file = File(
+      _joinPath(workspace.path, 'linux/runner/my_application.cc'),
+    );
+    if (!file.existsSync()) {
+      return;
+    }
+
+    final content = await file.readAsString();
+    var updated = content;
+    final cIconName = _cStringLiteral(iconName);
+    final cWindowClass = _cStringLiteral(windowClass);
+    if (!updated.contains('pack_foundry_window_icon')) {
+      updated = updated.replaceFirstMapped(
+        RegExp(r'gtk_window_set_default_size\s*\([^;]+;\s*', multiLine: true),
+        (match) =>
+            '''${match.group(0)}  gtk_window_set_icon_name(window, "$cIconName");
+  const gchar* pack_foundry_icon_candidates[] = {
+    "pack_foundry_window_icon.svg",
+    "pack_foundry_window_icon.png",
+    nullptr,
+  };
+  g_autofree gchar* pf_executable_path = g_file_read_link("/proc/self/exe", nullptr);
+  if (pf_executable_path != nullptr) {
+    g_autofree gchar* pf_executable_dir = g_path_get_dirname(pf_executable_path);
+    for (int pf_icon_index = 0; pack_foundry_icon_candidates[pf_icon_index] != nullptr; pf_icon_index++) {
+      g_autofree gchar* pf_icon_path = g_build_filename(
+          pf_executable_dir, pack_foundry_icon_candidates[pf_icon_index], nullptr);
+      if (g_file_test(pf_icon_path, G_FILE_TEST_EXISTS)) {
+        gtk_window_set_icon_from_file(window, pf_icon_path, nullptr);
+        break;
+      }
+    }
+  }
+
+''',
+      );
+    }
+
+    updated = updated.replaceAllMapped(
+      RegExp(r'g_set_prgname\s*\([^;]+\);'),
+      (_) => 'g_set_prgname("$cWindowClass");',
+    );
+
+    if (updated != content) {
+      await file.writeAsString(updated);
+    }
   }
 
   Future<void> _patchLinuxWindowSize(
@@ -1300,7 +1406,7 @@ Required Windows-side tools prepared by the script:
       final appName = configuration.appName.trim().isEmpty
           ? 'Flutter App'
           : configuration.appName.trim();
-      final desktopId = _slugify(appName);
+      final desktopFileId = _linuxDesktopFileId(appName);
       final executable = await _findBundleExecutable(bundleDirectory);
       if (executable == null) {
         yield const BuildEvent.log(
@@ -1318,7 +1424,7 @@ Required Windows-side tools prepared by the script:
         'pack_foundry_appimage_',
       );
       final appDir = Directory(
-        _joinPath(tempDirectory.path, '$desktopId.AppDir'),
+        _joinPath(tempDirectory.path, '$desktopFileId.AppDir'),
       );
       final appBinDir = Directory(_joinPath(appDir.path, 'usr/bin'));
       await appBinDir.create(recursive: true);
@@ -1331,11 +1437,12 @@ Required Windows-side tools prepared by the script:
       await _writeDesktopFile(
         appDir: appDir,
         appName: appName,
-        desktopId: desktopId,
+        desktopFileId: desktopFileId,
+        windowClass: _slugify(appName),
       );
       await _prepareAppIcon(
         appDir: appDir,
-        desktopId: desktopId,
+        iconName: desktopFileId,
         iconPath: configuration.iconPath,
       );
 
@@ -1504,12 +1611,9 @@ Required Windows-side tools prepared by the script:
           ? 'Flutter App'
           : configuration.appName.trim();
       final packageName = _slugify(appName);
+      final desktopFileId = _linuxDesktopFileId(appName);
       final rpmVersion = await _readRpmVersion(configuration);
-      final desktopFileName = '$packageName.desktop';
-      final iconFileName = await _prepareRpmIcon(
-        configuration: configuration,
-        packageName: packageName,
-      );
+      final desktopFileName = '$desktopFileId.desktop';
 
       tempDirectory = await Directory.systemTemp.createTemp(
         'pack_foundry_rpm_',
@@ -1522,6 +1626,11 @@ Required Windows-side tools prepared by the script:
       );
       await specsDirectory.create(recursive: true);
       await assetsDirectory.create(recursive: true);
+      final preparedIcon = await _copyPackageIcon(
+        assetsDirectory: assetsDirectory,
+        iconPath: configuration.iconPath,
+        fileNameWithoutExtension: desktopFileId,
+      );
 
       final desktopFile = File(
         _joinPath(assetsDirectory.path, desktopFileName),
@@ -1530,14 +1639,15 @@ Required Windows-side tools prepared by the script:
 Type=Application
 Name=${_escapeDesktopValue(appName)}
 Exec=/opt/$packageName/${_basename(executable.path)}
-Icon=$packageName
+Icon=$desktopFileId
+StartupWMClass=$packageName
 Categories=Utility;
 Terminal=false
 ''');
 
-      final iconSource = iconFileName == null
-          ? await _writeFallbackRpmIcon(assetsDirectory, packageName)
-          : File(iconFileName);
+      final iconSource =
+          preparedIcon ??
+          await _writeFallbackRpmIcon(assetsDirectory, desktopFileId);
       final specFile = File(
         _joinPath(specsDirectory.path, '$packageName.spec'),
       );
@@ -1546,6 +1656,7 @@ Terminal=false
           configuration: configuration,
           appName: appName,
           packageName: packageName,
+          desktopFileId: desktopFileId,
           version: rpmVersion.version,
           release: rpmVersion.release,
           bundleDirectory: bundleDirectory,
@@ -1630,6 +1741,7 @@ Terminal=false
     required BuildConfiguration configuration,
     required String appName,
     required String packageName,
+    required String desktopFileId,
     required String version,
     required String release,
     required Directory bundleDirectory,
@@ -1639,8 +1751,8 @@ Terminal=false
   }) {
     final iconExtension = _extension(iconFile.path).toLowerCase();
     final iconDestination = iconExtension == '.svg'
-        ? '%{buildroot}/usr/share/icons/hicolor/scalable/apps/$packageName.svg'
-        : '%{buildroot}/usr/share/icons/hicolor/256x256/apps/$packageName.png';
+        ? '%{buildroot}/usr/share/icons/hicolor/scalable/apps/$desktopFileId.svg'
+        : '%{buildroot}/usr/share/icons/hicolor/256x256/apps/$desktopFileId.png';
 
     final homepage = configuration.homepageUrl.trim();
     return '''%global __brp_check_rpaths %{nil}
@@ -1664,13 +1776,13 @@ rm -rf %{buildroot}
 mkdir -p %{buildroot}/opt/$packageName
 cp -a ${_shellQuote(bundleDirectory.path)}/. %{buildroot}/opt/$packageName/
 chmod 755 %{buildroot}/opt/$packageName/${_shellQuote(executableName)}
-install -Dm0644 ${_shellQuote(desktopFile.path)} %{buildroot}/usr/share/applications/$packageName.desktop
+install -Dm0644 ${_shellQuote(desktopFile.path)} %{buildroot}/usr/share/applications/$desktopFileId.desktop
 install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
 
 %files
 /opt/$packageName
-/usr/share/applications/$packageName.desktop
-/usr/share/icons/hicolor/*/apps/$packageName.*
+/usr/share/applications/$desktopFileId.desktop
+/usr/share/icons/hicolor/*/apps/$desktopFileId.*
 
 %changelog
 * ${_rpmChangelogDate()} ${_rpmHeaderValue(_publisherName(configuration))} <${_rpmHeaderValue(_developerEmail(configuration))}> - $version-$release
@@ -1727,22 +1839,6 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
       }
     }
     return null;
-  }
-
-  Future<String?> _prepareRpmIcon({
-    required BuildConfiguration configuration,
-    required String packageName,
-  }) async {
-    final iconPath = configuration.iconPath;
-    if (iconPath == null || iconPath.isEmpty) {
-      return null;
-    }
-
-    final source = File(iconPath);
-    if (!source.existsSync()) {
-      return null;
-    }
-    return source.path;
   }
 
   Future<File> _writeFallbackRpmIcon(
@@ -1862,6 +1958,7 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
         ? 'Flutter App'
         : configuration.appName.trim();
     final packageName = _slugify(appName);
+    final desktopFileId = _linuxDesktopFileId(appName);
     final version = await _readDebianVersion(workspace, configuration);
     final iconPath = await _copyIconIntoWorkspace(
       workspace: workspace,
@@ -1881,6 +1978,8 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
       'PACKFOUNDRY_APP_NAME=${_dockerEnvValue(appName)}',
       '-e',
       'PACKFOUNDRY_PACKAGE_NAME=$packageName',
+      '-e',
+      'PACKFOUNDRY_DESKTOP_FILE_ID=$desktopFileId',
       '-e',
       'PACKFOUNDRY_VERSION=$version',
       '-e',
@@ -2041,6 +2140,16 @@ mkdir -p \
   "$package_root/usr/share/icons/hicolor/256x256/apps"
 
 cp -a "$bundle/." "$package_root/opt/$PACKFOUNDRY_PACKAGE_NAME/"
+if [ -n "${PACKFOUNDRY_ICON_PATH:-}" ] && [ -f "/work/$PACKFOUNDRY_ICON_PATH" ]; then
+  case "$PACKFOUNDRY_ICON_PATH" in
+    *.svg|*.SVG)
+      cp "/work/$PACKFOUNDRY_ICON_PATH" "$package_root/opt/$PACKFOUNDRY_PACKAGE_NAME/pack_foundry_window_icon.svg"
+      ;;
+    *)
+      cp "/work/$PACKFOUNDRY_ICON_PATH" "$package_root/opt/$PACKFOUNDRY_PACKAGE_NAME/pack_foundry_window_icon.png"
+      ;;
+  esac
+fi
 executable="$(find "$package_root/opt/$PACKFOUNDRY_PACKAGE_NAME" -maxdepth 1 -type f -perm /111 ! -name '*.so' | head -n 1)"
 if [ -z "$executable" ]; then
   echo "Bundle executable was not found" >&2
@@ -2063,12 +2172,13 @@ if [ -n "${PACKFOUNDRY_HOMEPAGE:-}" ]; then
   printf 'Homepage: %s\n' "$PACKFOUNDRY_HOMEPAGE" >> "$package_root/DEBIAN/control"
 fi
 
-cat > "$package_root/usr/share/applications/$PACKFOUNDRY_PACKAGE_NAME.desktop" <<EOF
+cat > "$package_root/usr/share/applications/$PACKFOUNDRY_DESKTOP_FILE_ID.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=$PACKFOUNDRY_APP_NAME
 Exec=/opt/$PACKFOUNDRY_PACKAGE_NAME/$(basename "$executable")
-Icon=$PACKFOUNDRY_PACKAGE_NAME
+Icon=$PACKFOUNDRY_DESKTOP_FILE_ID
+StartupWMClass=$PACKFOUNDRY_PACKAGE_NAME
 Categories=Utility;
 Terminal=false
 EOF
@@ -2076,14 +2186,14 @@ EOF
 if [ -n "${PACKFOUNDRY_ICON_PATH:-}" ] && [ -f "/work/$PACKFOUNDRY_ICON_PATH" ]; then
   case "$PACKFOUNDRY_ICON_PATH" in
     *.svg|*.SVG)
-      cp "/work/$PACKFOUNDRY_ICON_PATH" "$package_root/usr/share/icons/hicolor/scalable/apps/$PACKFOUNDRY_PACKAGE_NAME.svg"
+      cp "/work/$PACKFOUNDRY_ICON_PATH" "$package_root/usr/share/icons/hicolor/scalable/apps/$PACKFOUNDRY_DESKTOP_FILE_ID.svg"
       ;;
     *)
-      cp "/work/$PACKFOUNDRY_ICON_PATH" "$package_root/usr/share/icons/hicolor/256x256/apps/$PACKFOUNDRY_PACKAGE_NAME.png"
+      cp "/work/$PACKFOUNDRY_ICON_PATH" "$package_root/usr/share/icons/hicolor/256x256/apps/$PACKFOUNDRY_DESKTOP_FILE_ID.png"
       ;;
   esac
 else
-  cat > "$package_root/usr/share/icons/hicolor/scalable/apps/$PACKFOUNDRY_PACKAGE_NAME.svg" <<EOF
+  cat > "$package_root/usr/share/icons/hicolor/scalable/apps/$PACKFOUNDRY_DESKTOP_FILE_ID.svg" <<EOF
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <rect width="256" height="256" rx="48" fill="#0EA5A4"/>
   <path d="M64 80h86a42 42 0 0 1 0 84H96v44H64V80Zm32 28v28h50a14 14 0 0 0 0-28H96Z" fill="#ffffff"/>
@@ -2275,6 +2385,57 @@ echo "$deb_path"
     return '.pack_foundry/icon$extension';
   }
 
+  Future<void> _copySelectedIconToLinuxBundle({
+    required Directory bundleDirectory,
+    required String? iconPath,
+  }) async {
+    final preparedIcon = await _copyPackageIcon(
+      assetsDirectory: bundleDirectory,
+      iconPath: iconPath,
+      fileNameWithoutExtension: 'pack_foundry_window_icon',
+    );
+    if (preparedIcon == null) {
+      return;
+    }
+
+    final extension = _extension(preparedIcon.path).toLowerCase();
+    final otherExtension = extension == '.svg' ? '.png' : '.svg';
+    final staleIcon = File(
+      _joinPath(
+        bundleDirectory.path,
+        'pack_foundry_window_icon$otherExtension',
+      ),
+    );
+    if (staleIcon.existsSync()) {
+      await staleIcon.delete();
+    }
+  }
+
+  Future<File?> _copyPackageIcon({
+    required Directory assetsDirectory,
+    required String? iconPath,
+    required String fileNameWithoutExtension,
+  }) async {
+    if (iconPath == null || iconPath.isEmpty) {
+      return null;
+    }
+
+    final source = File(iconPath);
+    if (!source.existsSync()) {
+      return null;
+    }
+
+    await assetsDirectory.create(recursive: true);
+    final extension = _extension(source.path).toLowerCase() == '.svg'
+        ? '.svg'
+        : '.png';
+    final destination = File(
+      _joinPath(assetsDirectory.path, '$fileNameWithoutExtension$extension'),
+    );
+    await source.copy(destination.path);
+    return destination;
+  }
+
   String _dockerEnvValue(String value) {
     return value.replaceAll('\n', ' ').replaceAll('\r', ' ');
   }
@@ -2355,14 +2516,16 @@ exec "\$HERE/usr/bin/$executableName" "\$@"
   Future<void> _writeDesktopFile({
     required Directory appDir,
     required String appName,
-    required String desktopId,
+    required String desktopFileId,
+    required String windowClass,
   }) async {
-    final desktopFile = File(_joinPath(appDir.path, '$desktopId.desktop'));
+    final desktopFile = File(_joinPath(appDir.path, '$desktopFileId.desktop'));
     await desktopFile.writeAsString('''[Desktop Entry]
 Type=Application
 Name=${_escapeDesktopValue(appName)}
 Exec=AppRun
-Icon=$desktopId
+Icon=$desktopFileId
+StartupWMClass=$windowClass
 Categories=Utility;
 Terminal=false
 ''');
@@ -2370,7 +2533,7 @@ Terminal=false
 
   Future<void> _prepareAppIcon({
     required Directory appDir,
-    required String desktopId,
+    required String iconName,
     required String? iconPath,
   }) async {
     final source = iconPath == null ? null : File(iconPath);
@@ -2378,14 +2541,14 @@ Terminal=false
       final extension = _extension(source.path).toLowerCase();
       final normalizedExtension = extension == '.svg' ? '.svg' : '.png';
       final iconFile = File(
-        _joinPath(appDir.path, '$desktopId$normalizedExtension'),
+        _joinPath(appDir.path, '$iconName$normalizedExtension'),
       );
       await source.copy(iconFile.path);
       await source.copy(_joinPath(appDir.path, '.DirIcon'));
       return;
     }
 
-    final fallbackIcon = File(_joinPath(appDir.path, '$desktopId.svg'));
+    final fallbackIcon = File(_joinPath(appDir.path, '$iconName.svg'));
     await fallbackIcon.writeAsString(
       '''<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <rect width="256" height="256" rx="48" fill="#0EA5A4"/>
@@ -2597,8 +2760,33 @@ Terminal=false
     return slug.isEmpty ? 'flutter-app' : slug;
   }
 
+  String _linuxDesktopFileId(String appName) {
+    return 'dev.packfoundry.${_dbusIdPart(appName)}';
+  }
+
+  String _dbusIdPart(String value) {
+    final normalized = value
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9_]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    final fallback = normalized.isEmpty ? 'flutter_app' : normalized;
+    if (RegExp(r'^[a-z_]').hasMatch(fallback)) {
+      return fallback;
+    }
+    return 'app_$fallback';
+  }
+
   String _escapeDesktopValue(String value) {
     return value.replaceAll('\n', ' ').replaceAll('\r', ' ');
+  }
+
+  String _cStringLiteral(String value) {
+    return value
+        .replaceAll(r'\', r'\\')
+        .replaceAll('"', r'\"')
+        .replaceAll('\n', r'\n')
+        .replaceAll('\r', r'\r');
   }
 
   String _extension(String path) {

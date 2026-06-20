@@ -929,7 +929,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       _isBuilding = true;
       _buildProgress = 0;
       _buildLog.clear();
-      _roadmapSteps.clear();
+      _replaceRoadmapWithPreview();
     });
 
     final configuration = BuildConfiguration(
@@ -948,39 +948,48 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       targets: _targets,
     );
 
-    await for (final event in _buildService.build(configuration)) {
-      if (!mounted) {
-        return;
+    try {
+      await for (final event in _buildService.build(configuration)) {
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          final logEntry = event.logEntry;
+          final progress = event.progress;
+          final roadmapPlan = event.roadmapPlan;
+          final roadmapUpdate = event.roadmapUpdate;
+          if (logEntry != null) {
+            _buildLog.add(logEntry);
+          }
+          if (progress != null) {
+            _buildProgress = progress.clamp(0, 100);
+          }
+          if (roadmapPlan != null) {
+            _roadmapSteps
+              ..clear()
+              ..addAll(roadmapPlan);
+          }
+          if (roadmapUpdate != null) {
+            _applyRoadmapUpdate(roadmapUpdate);
+          }
+        });
       }
-
-      setState(() {
-        final logEntry = event.logEntry;
-        final progress = event.progress;
-        final roadmapPlan = event.roadmapPlan;
-        final roadmapUpdate = event.roadmapUpdate;
-        if (logEntry != null) {
-          _buildLog.add(logEntry);
-        }
-        if (progress != null) {
-          _buildProgress = progress.clamp(0, 100);
-        }
-        if (roadmapPlan != null) {
-          _roadmapSteps
-            ..clear()
-            ..addAll(roadmapPlan);
-        }
-        if (roadmapUpdate != null) {
-          _applyRoadmapUpdate(roadmapUpdate);
-        }
-      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isBuilding = false;
+          _buildProgress = 0;
+          _replaceRoadmapWithPreview();
+        });
+      }
     }
+  }
 
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _isBuilding = false;
-    });
+  void _replaceRoadmapWithPreview() {
+    _roadmapSteps
+      ..clear()
+      ..addAll(_buildService.createRoadmapPlan(_targets));
   }
 
   void _applyRoadmapUpdate(BuildRoadmapUpdate update) {
@@ -1340,8 +1349,13 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   }
 
   void _setTargetSelection(BuildTarget target, bool selected) {
+    if (_isBuilding) {
+      return;
+    }
     setState(() {
       target.selected = selected;
+      _buildProgress = 0;
+      _replaceRoadmapWithPreview();
     });
   }
 }
