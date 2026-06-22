@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/models/build_configuration.dart';
@@ -13,6 +15,9 @@ class BuildPanel extends StatefulWidget {
     required this.roadmapSteps,
     required this.log,
     required this.onBuild,
+    required this.isRunning,
+    required this.onRun,
+    required this.onStop,
     this.configuration,
     super.key,
   });
@@ -23,6 +28,9 @@ class BuildPanel extends StatefulWidget {
   final List<BuildRoadmapStep> roadmapSteps;
   final List<BuildLogEntry> log;
   final VoidCallback onBuild;
+  final bool isRunning;
+  final VoidCallback onRun;
+  final VoidCallback onStop;
   final BuildConfiguration? configuration;
 
   @override
@@ -128,20 +136,53 @@ class _BuildPanelState extends State<BuildPanel> {
           ],
           Align(
             alignment: Alignment.centerLeft,
-            child: FilledButton.icon(
-              onPressed: widget.isBuilding || widget.selectedTargets == 0
-                  ? null
-                  : widget.onBuild,
-              icon: Icon(
-                widget.isBuilding
-                    ? Icons.hourglass_top_outlined
-                    : Icons.rocket_launch_outlined,
-              ),
-              label: Text(
-                widget.isBuilding ? l10n.building : l10n.buildInstallers,
-              ),
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed:
+                      widget.isBuilding ||
+                          widget.isRunning ||
+                          widget.selectedTargets == 0
+                      ? null
+                      : widget.onBuild,
+                  icon: Icon(
+                    widget.isBuilding
+                        ? Icons.hourglass_top_outlined
+                        : Icons.rocket_launch_outlined,
+                  ),
+                  label: Text(
+                    widget.isBuilding ? l10n.building : l10n.buildInstallers,
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: widget.isBuilding || widget.configuration == null
+                      ? null
+                      : widget.isRunning
+                      ? widget.onStop
+                      : widget.onRun,
+                  icon: Icon(
+                    widget.isRunning
+                        ? Icons.stop_circle_outlined
+                        : Icons.play_arrow_outlined,
+                  ),
+                  label: Text(
+                    widget.isRunning
+                        ? l10n.stopRunningApp
+                        : l10n.runWithoutBuild,
+                  ),
+                ),
+              ],
             ),
           ),
+          if (widget.isRunning) ...[
+            const SizedBox(height: 8),
+            _BuildStatusChip(
+              icon: Icons.play_circle_outline,
+              label: l10n.runningApp,
+            ),
+          ],
           if (widget.roadmapSteps.isNotEmpty) ...[
             const SizedBox(height: 16),
             if (_displayMode == _BuildDisplayMode.visual)
@@ -508,6 +549,35 @@ const _visualSubsteps = <String, List<_VisualSubstep>>{
       'Create the transferable Windows build zip.',
     ),
   ],
+  'android-build': [
+    _VisualSubstep(
+      'android-build:dependencies',
+      'Android dependencies',
+      'Resolve Flutter packages before the Android build.',
+    ),
+    _VisualSubstep(
+      'android-build:gradle',
+      'Gradle release build',
+      'Run Flutter and Gradle to compile the release APK.',
+    ),
+    _VisualSubstep(
+      'android-build:signing',
+      'APK signing',
+      'Let the Android toolchain sign the release APK.',
+    ),
+  ],
+  'apk-export': [
+    _VisualSubstep(
+      'apk-export:locate',
+      'Locate APK',
+      'Find the generated app-release.apk file.',
+    ),
+    _VisualSubstep(
+      'apk-export:copy',
+      'Export APK',
+      'Copy and rename the APK in the export directory.',
+    ),
+  ],
   'summary': [
     _VisualSubstep(
       'summary:verify',
@@ -604,6 +674,16 @@ class _BuildCommands extends StatelessWidget {
     final description = configuration.description.trim().isEmpty
         ? '$appName packaged with PackFoundry'
         : configuration.description.trim();
+    final debDepends = _packageDependencies(
+      configuration,
+      type: 'deb',
+      defaults: const ['libgtk-3-0', 'libstdc++6', 'liblzma5'],
+    );
+    final rpmRequires = _packageDependencies(
+      configuration,
+      type: 'rpm',
+      defaults: const ['gtk3', 'libstdc++', 'xz-libs'],
+    );
     final desktopId = 'dev.packfoundry.${packageName.replaceAll('-', '_')}';
 
     if (stepId == 'workspace') {
@@ -635,8 +715,9 @@ class _BuildCommands extends StatelessWidget {
     }
 
     if (stepId == 'rpm') {
-      return const [
+      return [
         r'RPM_TOP="$WORK_ROOT/rpmbuild"; RPM_ASSETS="$WORK_ROOT/rpm-assets"; RPM_SPEC="$RPM_TOP/SPECS/$PACKAGE_NAME.spec"',
+        'RPM_REQUIRES=${_shellQuote(rpmRequires)}',
         r'mkdir -p "$RPM_TOP/SPECS" "$RPM_TOP/RPMS" "$RPM_ASSETS"',
         r'''cat > "$RPM_ASSETS/$DESKTOP_ID.desktop" <<EOF
 [Desktop Entry]
@@ -667,7 +748,7 @@ Version: $VERSION
 Release: 1%{?dist}
 Summary: $APP_NAME
 License: GPL-2.0-only
-Requires: gtk3, libstdc++, xz-libs
+Requires: $RPM_REQUIRES
 
 %description
 $APP_NAME packaged manually from the PackFoundry command plan.
@@ -743,7 +824,8 @@ fi''',
     }
 
     if (stepId == 'deb-container') {
-      return const [
+      return [
+        'DEB_DEPENDS=${_shellQuote(debDepends)}',
         r'''DEB_BUILD_SCRIPT='set -euo pipefail
 export PATH=/opt/flutter/bin:$PATH
 cd /work
@@ -763,9 +845,9 @@ Section: utils
 Priority: optional
 Architecture: %s
 Maintainer: %s
-Depends: libgtk-3-0, libstdc++6, liblzma5
+Depends: %s
 Description: %s
-" "$PACKFOUNDRY_PACKAGE_NAME" "$PACKFOUNDRY_VERSION" "$ARCH" "$PACKFOUNDRY_MAINTAINER" "$PACKFOUNDRY_DESCRIPTION" > "$ROOT/DEBIAN/control"
+" "$PACKFOUNDRY_PACKAGE_NAME" "$PACKFOUNDRY_VERSION" "$ARCH" "$PACKFOUNDRY_MAINTAINER" "$PACKFOUNDRY_DEB_DEPENDS" "$PACKFOUNDRY_DESCRIPTION" > "$ROOT/DEBIAN/control"
 printf "[Desktop Entry]
 Type=Application
 Name=%s
@@ -784,7 +866,7 @@ fi
 dpkg-deb --build --root-owner-group "$ROOT" "/out/$PACKFOUNDRY_PACKAGE_NAME-$PACKFOUNDRY_VERSION-$ARCH.deb"' ''',
         r'RUNTIME="$(command -v docker || command -v podman)"',
         r'"$RUNTIME" image inspect packfoundry/deb-builder:bookworm-flutter-stable-v1',
-        r'''"$RUNTIME" run --rm -v "$WORKSPACE:/work" -v "$EXPORT:/out" -v packfoundry-pub-cache:/root/.pub-cache -e PACKFOUNDRY_APP_NAME="$APP_NAME" -e PACKFOUNDRY_PACKAGE_NAME="$PACKAGE_NAME" -e PACKFOUNDRY_DESKTOP_ID="$DESKTOP_ID" -e PACKFOUNDRY_VERSION="$VERSION" -e PACKFOUNDRY_MAINTAINER="$MAINTAINER" -e PACKFOUNDRY_DESCRIPTION="$DESCRIPTION" -e PACKFOUNDRY_ICON_PATH="$WORKSPACE_ICON" packfoundry/deb-builder:bookworm-flutter-stable-v1 bash -lc "$DEB_BUILD_SCRIPT"''',
+        r'''"$RUNTIME" run --rm -v "$WORKSPACE:/work" -v "$EXPORT:/out" -v packfoundry-pub-cache:/root/.pub-cache -e PACKFOUNDRY_APP_NAME="$APP_NAME" -e PACKFOUNDRY_PACKAGE_NAME="$PACKAGE_NAME" -e PACKFOUNDRY_DESKTOP_ID="$DESKTOP_ID" -e PACKFOUNDRY_VERSION="$VERSION" -e PACKFOUNDRY_MAINTAINER="$MAINTAINER" -e PACKFOUNDRY_DESCRIPTION="$DESCRIPTION" -e PACKFOUNDRY_DEB_DEPENDS="$DEB_DEPENDS" -e PACKFOUNDRY_ICON_PATH="$WORKSPACE_ICON" packfoundry/deb-builder:bookworm-flutter-stable-v1 bash -lc "$DEB_BUILD_SCRIPT"''',
       ];
     }
 
@@ -877,6 +959,18 @@ INNO''',
       ];
     }
 
+    if (stepId == 'android-build') {
+      return const [r'flutter pub get', r'flutter build apk --release'];
+    }
+
+    if (stepId == 'apk-export') {
+      return const [
+        r'APK="$(find "$WORKSPACE/build/app/outputs" -type f -name "*release*.apk" | head -n 1)"',
+        r'test -f "$APK"',
+        r'cp -f "$APK" "$EXPORT/${APP_NAME}_${VERSION}.apk"',
+      ];
+    }
+
     if (stepId == 'summary') {
       return const [r'find "$EXPORT" -maxdepth 1 -type f -print'];
     }
@@ -923,6 +1017,36 @@ INNO''',
 
   String _shellQuote(String value) {
     return "'${value.replaceAll("'", "'\\''")}'";
+  }
+
+  String _packageDependencies(
+    BuildConfiguration configuration, {
+    required String type,
+    required List<String> defaults,
+  }) {
+    final seen = <String>{};
+    final dependencies = <String>[];
+    void add(String value) {
+      final normalized = value.trim();
+      if (normalized.isEmpty || !seen.add(normalized.toLowerCase())) {
+        return;
+      }
+      dependencies.add(normalized);
+    }
+
+    for (final dependency in defaults) {
+      add(dependency);
+    }
+    final extra = configuration.additionalDependencies[type] ?? '';
+    final withoutFieldName = extra.replaceFirst(
+      RegExp(r'^\s*(Depends|Requires)\s*:', caseSensitive: false),
+      '',
+    );
+    for (final part
+        in withoutFieldName.replaceAll('\r\n', '\n').split(RegExp(r'[\n,]'))) {
+      add(part);
+    }
+    return dependencies.join(', ');
   }
 
   String _slugify(String value) {
@@ -1145,26 +1269,147 @@ class _BuildRoadmap extends StatefulWidget {
 }
 
 class _BuildRoadmapState extends State<_BuildRoadmap> {
+  static const _minimumStepDisplayDuration = Duration(seconds: 1);
+  static const _nextStepDelay = Duration(milliseconds: 180);
+
   String? _expandedStepId;
   String? _lastRunningStepId;
+  late List<BuildRoadmapStep> _displayedSteps;
+  late List<BuildRoadmapStep> _targetSteps;
+  Timer? _transitionTimer;
 
   @override
   void initState() {
     super.initState();
+    _displayedSteps = List.of(widget.steps);
+    _targetSteps = List.of(widget.steps);
     _syncExpandedStepWithRunningStep();
   }
 
   @override
   void didUpdateWidget(_BuildRoadmap oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _syncExpandedStepWithRunningStep();
-    if (_expandedStepId == null) {
+    if (!_sameStepIds(_targetSteps, widget.steps)) {
+      _transitionTimer?.cancel();
+      _transitionTimer = null;
+      _targetSteps = List.of(widget.steps);
+      _displayedSteps = List.of(widget.steps);
+      _syncExpandedStepWithRunningStep();
       return;
     }
-    final stillExists = widget.steps.any((step) => step.id == _expandedStepId);
-    if (!stillExists) {
-      _expandedStepId = null;
+
+    _targetSteps = List.of(widget.steps);
+    _advanceDisplayedSteps();
+  }
+
+  @override
+  void dispose() {
+    _transitionTimer?.cancel();
+    super.dispose();
+  }
+
+  void _advanceDisplayedSteps() {
+    if (_transitionTimer?.isActive ?? false) {
+      return;
     }
+    if (_stepsMatch(_displayedSteps, _targetSteps)) {
+      _syncExpandedStepWithRunningStep();
+      return;
+    }
+
+    for (var index = 0; index < _displayedSteps.length; index++) {
+      final displayed = _displayedSteps[index];
+      final target = _targetSteps[index];
+      if (_stepMatches(displayed, target)) {
+        continue;
+      }
+
+      if (_shouldHoldBeforeFinalState(displayed, target)) {
+        setState(() {
+          _displayedSteps[index] = displayed.copyWith(
+            state: BuildRoadmapStepState.running,
+            progress: 100,
+            detail: target.detail,
+          );
+          _syncExpandedStepWithRunningStep();
+        });
+        _transitionTimer = Timer(_minimumStepDisplayDuration, () {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _displayedSteps[index] = _targetSteps[index];
+            _syncExpandedStepWithRunningStep();
+          });
+          _transitionTimer = Timer(_nextStepDelay, () {
+            _transitionTimer = null;
+            if (mounted) {
+              _advanceDisplayedSteps();
+            }
+          });
+        });
+        return;
+      }
+
+      setState(() {
+        _displayedSteps[index] = target;
+        _syncExpandedStepWithRunningStep();
+      });
+      _advanceDisplayedSteps();
+      return;
+    }
+  }
+
+  bool _shouldHoldBeforeFinalState(
+    BuildRoadmapStep displayed,
+    BuildRoadmapStep target,
+  ) {
+    final targetIsFinal = switch (target.state) {
+      BuildRoadmapStepState.success ||
+      BuildRoadmapStepState.warning ||
+      BuildRoadmapStepState.skipped => true,
+      BuildRoadmapStepState.pending || BuildRoadmapStepState.running => false,
+    };
+    return targetIsFinal &&
+        displayed.state != target.state &&
+        displayed.state != BuildRoadmapStepState.skipped;
+  }
+
+  bool _sameStepIds(
+    List<BuildRoadmapStep> first,
+    List<BuildRoadmapStep> second,
+  ) {
+    if (first.length != second.length) {
+      return false;
+    }
+    for (var index = 0; index < first.length; index++) {
+      if (first[index].id != second[index].id) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _stepsMatch(
+    List<BuildRoadmapStep> first,
+    List<BuildRoadmapStep> second,
+  ) {
+    if (first.length != second.length) {
+      return false;
+    }
+    for (var index = 0; index < first.length; index++) {
+      if (!_stepMatches(first[index], second[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _stepMatches(BuildRoadmapStep first, BuildRoadmapStep second) {
+    return first.id == second.id &&
+        first.state == second.state &&
+        first.progress == second.progress &&
+        first.detail == second.detail;
   }
 
   void _syncExpandedStepWithRunningStep() {
@@ -1173,10 +1418,19 @@ class _BuildRoadmapState extends State<_BuildRoadmap> {
       _expandedStepId = runningStepId;
     }
     _lastRunningStepId = runningStepId;
+    if (_expandedStepId == null) {
+      return;
+    }
+    final stillExists = _displayedSteps.any(
+      (step) => step.id == _expandedStepId,
+    );
+    if (!stillExists) {
+      _expandedStepId = null;
+    }
   }
 
   String? _runningStepId() {
-    for (final step in widget.steps) {
+    for (final step in _displayedSteps) {
       if (step.state == BuildRoadmapStepState.running) {
         return step.id;
       }
@@ -1197,23 +1451,27 @@ class _BuildRoadmapState extends State<_BuildRoadmap> {
           runSpacing: 12,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            for (var index = 0; index < widget.steps.length; index++) ...[
+            for (var index = 0; index < _displayedSteps.length; index++) ...[
               _RoadmapStepCard(
-                step: widget.steps[index],
-                expanded: widget.steps[index].id == _expandedStepId,
+                step: _displayedSteps[index],
+                expanded: _displayedSteps[index].id == _expandedStepId,
                 expandedWidth: expandedWidth,
                 onTap: () {
                   setState(() {
-                    final stepId = widget.steps[index].id;
+                    final stepId = _displayedSteps[index].id;
                     _expandedStepId = _expandedStepId == stepId ? null : stepId;
                   });
                 },
               ),
-              if (index != widget.steps.length - 1)
-                Icon(
-                  Icons.arrow_forward,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  size: 20,
+              if (index != _displayedSteps.length - 1)
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 180),
+                  child: Icon(
+                    Icons.arrow_forward,
+                    key: ValueKey(_displayedSteps[index].state),
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    size: 20,
+                  ),
                 ),
             ],
           ],

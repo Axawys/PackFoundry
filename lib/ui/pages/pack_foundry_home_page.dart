@@ -1,19 +1,23 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/models/build_configuration.dart';
 import '../../core/models/build_log_entry.dart';
 import '../../core/models/build_target.dart';
 import '../../core/models/chip_tone.dart';
 import '../../core/models/builder_environment.dart';
+import '../../core/models/package_inspection.dart';
 import '../../core/models/project_config.dart';
 import '../../core/models/tool_status.dart';
 import '../../core/services/app_preferences.dart';
 import '../../core/services/build_service.dart';
 import '../../core/services/builder_environment_service.dart';
+import '../../core/services/package_inspector_service.dart';
 import '../../core/services/project_config_service.dart';
 import '../../core/services/toolchain_service.dart';
 import '../../l10n/app_localizations.dart';
@@ -22,6 +26,8 @@ import '../widgets/build_panel.dart';
 import '../widgets/preferences_panel.dart';
 import '../widgets/project_panel.dart';
 import '../widgets/installer_settings_panel.dart';
+import '../widgets/package_dependencies_panel.dart';
+import '../widgets/package_inspector_panel.dart';
 import '../widgets/toolchain_panel.dart';
 import '../widgets/welcome_dialog.dart';
 
@@ -55,6 +61,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   final _buildService = BuildService();
   final _toolchainService = ToolchainService();
   final _builderService = BuilderEnvironmentService();
+  final _packageInspectorService = const PackageInspectorService();
   final _projectConfigService = const ProjectConfigService();
   final _appPreferences = AppPreferences();
   final _appNameController = TextEditingController(text: _defaultAppName);
@@ -66,6 +73,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   final _descriptionController = TextEditingController();
   final _widthController = TextEditingController(text: '1280');
   final _heightController = TextEditingController(text: '800');
+  final _debAdditionalDependenciesController = TextEditingController();
+  final _rpmAdditionalDependenciesController = TextEditingController();
+  final _packageMetadataController = TextEditingController();
+  final _packageDependenciesController = TextEditingController();
   final _buildLog = <BuildLogEntry>[];
   final _roadmapSteps = <BuildRoadmapStep>[];
   final _projectChecks = <ProjectCheck>[];
@@ -75,7 +86,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   String? _projectPath;
   String? _iconPath;
   String? _outputPath;
+  PackageInspection? _packageInspection;
   bool _isBuilding = false;
+  bool _isRunningProject = false;
+  bool _isInspectingPackage = false;
   ToolchainInstallTarget? _installingToolTarget;
   int _buildProgress = 0;
   bool _welcomeDialogShown = false;
@@ -92,6 +106,9 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   ToolAvailability _rpmToolStatus = ToolAvailability.available;
   ToolAvailability _tarToolStatus = ToolAvailability.available;
   ToolAvailability _zipToolStatus = ToolAvailability.available;
+  ToolAvailability _javaStatus = ToolAvailability.available;
+  ToolAvailability _androidSdkStatus = ToolAvailability.available;
+  Process? _runningProjectProcess;
 
   final List<BuildTarget> _targets = [
     BuildTarget(
@@ -122,7 +139,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     BuildTarget(
       platform: 'Android',
       artifact: 'APK',
-      status: TargetStatus.blocked,
+      status: TargetStatus.installable,
     ),
     BuildTarget(
       platform: 'macOS',
@@ -209,7 +226,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   Future<void> _refreshToolchainStatus() async {
     final runtime = await _builderService.resolveRuntime();
     final results = await Future.wait([
-      _toolchainService.commandAvailability('flutter', ['--version']),
+      _toolchainService.flutterAvailability(),
       _linuxToolchainAvailable(),
       _builderService.builderAvailability(BuilderEnvironment.debBookworm),
       _builderService.builderAvailability(BuilderEnvironment.rpmFedora),
@@ -218,6 +235,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       _toolchainService.commandAvailability('rpmbuild', ['--version']),
       _toolchainService.commandAvailability('tar', ['--version']),
       _toolchainService.commandAvailability('zip', ['--version']),
+      _toolchainService.commandAvailability('java', ['-version']),
+      _toolchainService.androidSdkAvailability(),
     ]);
 
     if (!mounted) {
@@ -238,7 +257,21 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       _rpmToolStatus = results[6];
       _tarToolStatus = results[7];
       _zipToolStatus = results[8];
+      _javaStatus = results[9];
+      _androidSdkStatus = results[10];
+      _updateAndroidTargetStatus();
     });
+  }
+
+  void _updateAndroidTargetStatus() {
+    final androidReady = _androidBuildStatus == ToolAvailability.installed;
+    for (final target in _targets.where(
+      (target) => target.platform == 'Android',
+    )) {
+      target.status = androidReady
+          ? TargetStatus.ready
+          : TargetStatus.installable;
+    }
   }
 
   Future<ToolAvailability> _linuxToolchainAvailable() async {
@@ -311,6 +344,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       _appImageBuildGroup(l10n),
       _tarGzBuildGroup(l10n),
       _windowsBuildGroup(l10n),
+      _androidBuildGroup(l10n),
     ];
   }
 
@@ -511,6 +545,30 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     );
   }
 
+  ToolchainGroup _androidBuildGroup(AppLocalizations l10n) {
+    return ToolchainGroup(
+      title: l10n.androidBuildGroupTitle,
+      subtitle: l10n.androidBuildGroupSubtitle,
+      status: _androidBuildStatus,
+      installTarget: ToolchainInstallTarget.android,
+      tools: [
+        _flutterTool(l10n),
+        ToolStatus(
+          name: 'Android SDK',
+          command: r'ANDROID_HOME / sdkmanager',
+          status: _androidSdkStatus,
+          note: l10n.androidSdkNote,
+        ),
+        ToolStatus(
+          name: 'Java',
+          command: 'java',
+          status: _javaStatus,
+          note: l10n.javaNote,
+        ),
+      ],
+    );
+  }
+
   ToolStatus _hostSystemTool(
     AppLocalizations l10n,
     _HostDistribution distribution,
@@ -588,6 +646,15 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     if (_flutterStatus == ToolAvailability.installed &&
         _linuxToolchainStatus == ToolAvailability.installed &&
         _tarToolStatus == ToolAvailability.installed) {
+      return ToolAvailability.installed;
+    }
+    return ToolAvailability.available;
+  }
+
+  ToolAvailability get _androidBuildStatus {
+    if (_flutterStatus == ToolAvailability.installed &&
+        _androidSdkStatus == ToolAvailability.installed &&
+        _javaStatus == ToolAvailability.installed) {
       return ToolAvailability.installed;
     }
     return ToolAvailability.available;
@@ -704,7 +771,12 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
 
     setState(() {
       _installingToolTarget = target;
-      _installProgress = null;
+      _installProgress = ToolInstallProgress(
+        target: target,
+        progress: 5,
+        remainingSeconds: 60,
+        detail: 'Starting tool installation.',
+      );
     });
 
     final l10n = context.l10n;
@@ -795,6 +867,9 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       ToolchainInstallTarget.exe => ToolInstallResult.failure(
         context.l10n.exeInstallUnsupported,
       ),
+      ToolchainInstallTarget.android => const ToolInstallResult.failure(
+        'Android SDK removal is not implemented yet.',
+      ),
     };
   }
 
@@ -802,23 +877,69 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     ToolchainInstallTarget target,
   ) async {
     final distribution = _hostDistribution;
+    _setToolInstallProgress(
+      target,
+      15,
+      'Checking required tools and package recipes.',
+    );
     return switch (target) {
       ToolchainInstallTarget.rpm => _installRpmTools(distribution),
       ToolchainInstallTarget.deb => _installDebTools(distribution),
       ToolchainInstallTarget.appImage => _installAppImageTools(distribution),
       ToolchainInstallTarget.tarGz => _installTarGzTools(distribution),
       ToolchainInstallTarget.exe => _installWindowsTools(distribution),
+      ToolchainInstallTarget.android => _installAndroidTools(distribution),
     };
+  }
+
+  void _setToolInstallProgress(
+    ToolchainInstallTarget target,
+    int progress,
+    String detail, {
+    int remainingSeconds = 60,
+  }) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _installProgress = ToolInstallProgress(
+        target: target,
+        progress: progress.clamp(0, 100),
+        remainingSeconds: remainingSeconds,
+        detail: detail,
+      );
+    });
   }
 
   Future<ToolInstallResult> _installRpmTools(_HostDistribution distribution) {
     if (distribution.family == _LinuxDistributionFamily.rpm) {
-      return _toolchainService.installSystemPackages(
+      return _installFlutterAndSystemPackages(
         packagesByManager: const {
-          'dnf': ['clang', 'cmake', 'ninja-build', 'gtk3-devel', 'rpm-build'],
-          'apt-get': ['clang', 'cmake', 'ninja-build', 'libgtk-3-dev', 'rpm'],
-          'zypper': ['clang', 'cmake', 'ninja', 'gtk3-devel', 'rpm-build'],
-          'pacman': ['clang', 'cmake', 'ninja', 'gtk3', 'rpm-tools'],
+          'dnf': [
+            'git',
+            'clang',
+            'cmake',
+            'ninja-build',
+            'gtk3-devel',
+            'rpm-build',
+          ],
+          'apt-get': [
+            'git',
+            'clang',
+            'cmake',
+            'ninja-build',
+            'libgtk-3-dev',
+            'rpm',
+          ],
+          'zypper': [
+            'git',
+            'clang',
+            'cmake',
+            'ninja',
+            'gtk3-devel',
+            'rpm-build',
+          ],
+          'pacman': ['git', 'clang', 'cmake', 'ninja', 'gtk3', 'rpm-tools'],
         },
       );
     }
@@ -834,18 +955,19 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
 
   Future<ToolInstallResult> _installDebTools(_HostDistribution distribution) {
     if (distribution.family == _LinuxDistributionFamily.deb) {
-      return _toolchainService.installSystemPackages(
+      return _installFlutterAndSystemPackages(
         packagesByManager: const {
           'dnf': ['clang', 'cmake', 'ninja-build', 'gtk3-devel', 'dpkg-dev'],
           'apt-get': [
+            'git',
             'clang',
             'cmake',
             'ninja-build',
             'libgtk-3-dev',
             'dpkg-dev',
           ],
-          'zypper': ['clang', 'cmake', 'ninja', 'gtk3-devel', 'dpkg'],
-          'pacman': ['clang', 'cmake', 'ninja', 'gtk3', 'dpkg'],
+          'zypper': ['git', 'clang', 'cmake', 'ninja', 'gtk3-devel', 'dpkg'],
+          'pacman': ['git', 'clang', 'cmake', 'ninja', 'gtk3', 'dpkg'],
         },
       );
     }
@@ -854,12 +976,19 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   }
 
   Future<ToolInstallResult> _installTarGzTools(_HostDistribution distribution) {
-    return _toolchainService.installSystemPackages(
+    return _installFlutterAndSystemPackages(
       packagesByManager: const {
-        'dnf': ['clang', 'cmake', 'ninja-build', 'gtk3-devel', 'tar'],
-        'apt-get': ['clang', 'cmake', 'ninja-build', 'libgtk-3-dev', 'tar'],
-        'zypper': ['clang', 'cmake', 'ninja', 'gtk3-devel', 'tar'],
-        'pacman': ['clang', 'cmake', 'ninja', 'gtk3', 'tar'],
+        'dnf': ['git', 'clang', 'cmake', 'ninja-build', 'gtk3-devel', 'tar'],
+        'apt-get': [
+          'git',
+          'clang',
+          'cmake',
+          'ninja-build',
+          'libgtk-3-dev',
+          'tar',
+        ],
+        'zypper': ['git', 'clang', 'cmake', 'ninja', 'gtk3-devel', 'tar'],
+        'pacman': ['git', 'clang', 'cmake', 'ninja', 'gtk3', 'tar'],
       },
     );
   }
@@ -877,18 +1006,85 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     );
   }
 
+  Future<ToolInstallResult> _installAndroidTools(
+    _HostDistribution distribution,
+  ) async {
+    final results = <String>[];
+    _setToolInstallProgress(
+      ToolchainInstallTarget.android,
+      20,
+      'Checking git, unzip and Java.',
+      remainingSeconds: 120,
+    );
+    final systemToolsReady = await _toolchainService.allCommandsAvailable([
+      const CommandCheck('git', ['--version']),
+      const CommandCheck('unzip', ['-v']),
+      const CommandCheck('java', ['-version']),
+    ]);
+    final systemResult = systemToolsReady
+        ? const ToolInstallResult.success(
+            'Required system packages are already installed.',
+          )
+        : await _toolchainService.installSystemPackages(
+            packagesByManager: const {
+              'dnf': ['git', 'unzip', 'java-latest-openjdk-devel'],
+              'apt-get': ['git', 'unzip', 'openjdk-17-jdk'],
+              'zypper': ['git', 'unzip', 'java-17-openjdk-devel'],
+              'pacman': ['git', 'unzip', 'jdk17-openjdk'],
+            },
+          );
+    if (!systemResult.success) {
+      return systemResult;
+    }
+    results.add(systemResult.message);
+
+    _setToolInstallProgress(
+      ToolchainInstallTarget.android,
+      40,
+      'Checking Flutter SDK.',
+      remainingSeconds: 90,
+    );
+    final flutterResult = await _installFlutterSdkIfNeeded();
+    if (!flutterResult.success) {
+      return flutterResult;
+    }
+    results.add(flutterResult.message);
+
+    if (_androidSdkStatus != ToolAvailability.installed) {
+      _setToolInstallProgress(
+        ToolchainInstallTarget.android,
+        65,
+        'Downloading Android command line tools and SDK packages.',
+        remainingSeconds: 180,
+      );
+      final androidResult = await _toolchainService.installAndroidSdk();
+      if (!androidResult.success) {
+        return androidResult;
+      }
+      results.add(androidResult.message);
+    }
+
+    _setToolInstallProgress(
+      ToolchainInstallTarget.android,
+      95,
+      'Android tools are ready.',
+      remainingSeconds: 5,
+    );
+    return ToolInstallResult.success(results.join('\n'));
+  }
+
   Future<ToolInstallResult> _installAppImageTools(
     _HostDistribution distribution,
   ) async {
     ToolInstallResult? systemResult;
     if (_flutterStatus != ToolAvailability.installed ||
         _linuxToolchainStatus != ToolAvailability.installed) {
-      systemResult = await _toolchainService.installSystemPackages(
+      systemResult = await _installFlutterAndSystemPackages(
         packagesByManager: const {
-          'dnf': ['clang', 'cmake', 'ninja-build', 'gtk3-devel'],
-          'apt-get': ['clang', 'cmake', 'ninja-build', 'libgtk-3-dev'],
-          'zypper': ['clang', 'cmake', 'ninja', 'gtk3-devel'],
-          'pacman': ['clang', 'cmake', 'ninja', 'gtk3'],
+          'dnf': ['git', 'clang', 'cmake', 'ninja-build', 'gtk3-devel'],
+          'apt-get': ['git', 'clang', 'cmake', 'ninja-build', 'libgtk-3-dev'],
+          'zypper': ['git', 'clang', 'cmake', 'ninja', 'gtk3-devel'],
+          'pacman': ['git', 'clang', 'cmake', 'ninja', 'gtk3'],
         },
       );
       if (!systemResult.success) {
@@ -952,8 +1148,55 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
         const ToolInstallResult.failure('Builder installation did not finish.');
   }
 
-  Future<ToolInstallResult> _installDockerTools() {
+  Future<ToolInstallResult> _installFlutterAndSystemPackages({
+    required Map<String, List<String>> packagesByManager,
+  }) async {
+    final results = <String>[];
+    final systemResult = await _installSystemPackagesIfNeeded(
+      packagesByManager: packagesByManager,
+    );
+    if (!systemResult.success) {
+      return systemResult;
+    }
+    results.add(systemResult.message);
+
+    final flutterResult = await _installFlutterSdkIfNeeded();
+    if (!flutterResult.success) {
+      return flutterResult;
+    }
+    results.add(flutterResult.message);
+
+    return ToolInstallResult.success(results.join('\n'));
+  }
+
+  Future<ToolInstallResult> _installSystemPackagesIfNeeded({
+    required Map<String, List<String>> packagesByManager,
+    bool force = false,
+  }) async {
+    final hasMissingCommonTools =
+        _flutterStatus != ToolAvailability.installed ||
+        _linuxToolchainStatus != ToolAvailability.installed;
+    if (!force && !hasMissingCommonTools) {
+      return const ToolInstallResult.success(
+        'Required system packages are already installed.',
+      );
+    }
     return _toolchainService.installSystemPackages(
+      packagesByManager: packagesByManager,
+    );
+  }
+
+  Future<ToolInstallResult> _installFlutterSdkIfNeeded() {
+    if (_flutterStatus == ToolAvailability.installed) {
+      return Future.value(
+        const ToolInstallResult.success('Flutter SDK is already installed.'),
+      );
+    }
+    return _toolchainService.installFlutterSdk();
+  }
+
+  Future<ToolInstallResult> _installDockerTools() async {
+    final installResult = await _toolchainService.installSystemPackages(
       packagesByManager: const {
         'dnf': ['moby-engine', 'docker-cli', 'containerd'],
         'apt-get': ['docker.io'],
@@ -961,10 +1204,32 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
         'pacman': ['docker'],
       },
     );
+    if (!installResult.success) {
+      return installResult;
+    }
+
+    final serviceResult = await _toolchainService.enableDockerService();
+    if (!serviceResult.success) {
+      return serviceResult;
+    }
+
+    final groupResult = await _toolchainService.addCurrentUserToDockerGroup();
+    if (!groupResult.success) {
+      return groupResult;
+    }
+
+    return ToolInstallResult.success(
+      [
+        installResult.message,
+        serviceResult.message,
+        groupResult.message,
+      ].join('\n'),
+    );
   }
 
   @override
   void dispose() {
+    _runningProjectProcess?.kill(ProcessSignal.sigterm);
     if (_metadataListenersAttached) {
       for (final controller in _metadataControllers) {
         controller.removeListener(_scheduleReleaseMetadataSave);
@@ -983,6 +1248,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     _descriptionController.dispose();
     _widthController.dispose();
     _heightController.dispose();
+    _debAdditionalDependenciesController.dispose();
+    _rpmAdditionalDependenciesController.dispose();
+    _packageMetadataController.dispose();
+    _packageDependenciesController.dispose();
     super.dispose();
   }
 
@@ -1024,8 +1293,12 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       windowWidth: int.tryParse(_widthController.text),
       windowHeight: int.tryParse(_heightController.text),
       targets: _targets,
+      additionalDependencies: _additionalPackageDependencies(),
     );
 
+    var hadWarning = false;
+    var sawSuccess = false;
+    var shouldShowSuccess = false;
     try {
       await for (final event in _buildService.build(configuration)) {
         if (!mounted) {
@@ -1039,6 +1312,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
           final roadmapUpdate = event.roadmapUpdate;
           if (logEntry != null) {
             _buildLog.add(logEntry);
+            hadWarning = hadWarning || logEntry.state == BuildLogState.warning;
+            sawSuccess = sawSuccess || logEntry.state == BuildLogState.success;
           }
           if (progress != null) {
             _buildProgress = progress.clamp(0, 100);
@@ -1053,6 +1328,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
           }
         });
       }
+      shouldShowSuccess = sawSuccess && !hadWarning;
     } finally {
       if (mounted) {
         setState(() {
@@ -1060,8 +1336,198 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
           _buildProgress = 0;
           _replaceRoadmapWithPreview();
         });
+        if (shouldShowSuccess) {
+          await _showBuildSuccessDialog();
+        }
       }
     }
+  }
+
+  Future<void> _runProjectWithoutBuild() async {
+    if (_isBuilding || _isRunningProject) {
+      return;
+    }
+
+    final projectPath = _projectPath;
+    if (projectPath == null) {
+      _replaceLog(
+        BuildLogEntry(
+          title: context.l10n.projectNotSelectedTitle,
+          detail: context.l10n.projectNotSelectedDetail,
+          state: BuildLogState.warning,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isRunningProject = true;
+      _buildLog
+        ..clear()
+        ..add(
+          const BuildLogEntry(
+            title: 'Running Flutter app',
+            detail: 'flutter run -d linux',
+            state: BuildLogState.running,
+          ),
+        );
+    });
+
+    try {
+      final process = await _startFlutterRun(projectPath);
+      _runningProjectProcess = process;
+      _listenToRunOutput(process.stdout, BuildLogState.running);
+      _listenToRunOutput(process.stderr, BuildLogState.warning);
+      unawaited(_waitForRunProcess(process));
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isRunningProject = false;
+        _runningProjectProcess = null;
+        _buildLog.add(
+          BuildLogEntry(
+            title: 'Could not run Flutter app',
+            detail: error.toString(),
+            state: BuildLogState.warning,
+          ),
+        );
+      });
+    }
+  }
+
+  Future<Process> _startFlutterRun(String projectPath) async {
+    ProcessException? lastError;
+    for (final executable in _flutterExecutableCandidates()) {
+      try {
+        return await Process.start(
+          executable,
+          ['run', '-d', 'linux'],
+          workingDirectory: projectPath,
+          runInShell: true,
+          environment: _runEnvironment(),
+        );
+      } on ProcessException catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError ??
+        const ProcessException('flutter', [
+          'run',
+          '-d',
+          'linux',
+        ], 'Flutter executable was not found.');
+  }
+
+  void _listenToRunOutput(Stream<List<int>> stream, BuildLogState state) {
+    stream.transform(utf8.decoder).transform(const LineSplitter()).listen((
+      line,
+    ) {
+      final trimmed = line.trim();
+      if (!mounted || trimmed.isEmpty) {
+        return;
+      }
+      setState(() {
+        _buildLog.add(
+          BuildLogEntry(
+            title: state == BuildLogState.warning
+                ? 'Flutter stderr'
+                : 'Flutter output',
+            detail: trimmed,
+            state: state,
+          ),
+        );
+      });
+    });
+  }
+
+  Future<void> _waitForRunProcess(Process process) async {
+    final exitCode = await process.exitCode;
+    if (!mounted || _runningProjectProcess != process) {
+      return;
+    }
+    setState(() {
+      _isRunningProject = false;
+      _runningProjectProcess = null;
+      _buildLog.add(
+        BuildLogEntry(
+          title: 'Flutter app stopped',
+          detail: 'Process exited with code $exitCode.',
+          state: exitCode == 0 ? BuildLogState.success : BuildLogState.warning,
+        ),
+      );
+    });
+  }
+
+  void _stopRunningProject() {
+    final process = _runningProjectProcess;
+    if (process == null) {
+      return;
+    }
+    process.kill(ProcessSignal.sigterm);
+    setState(() {
+      _isRunningProject = false;
+      _runningProjectProcess = null;
+      _buildLog.add(
+        const BuildLogEntry(
+          title: 'Stopping Flutter app',
+          detail: 'Sent SIGTERM to the running flutter process.',
+          state: BuildLogState.running,
+        ),
+      );
+    });
+  }
+
+  List<String> _flutterExecutableCandidates() {
+    final managedFlutter = _managedFlutterExecutable();
+    return ['flutter', if (managedFlutter.existsSync()) managedFlutter.path];
+  }
+
+  Map<String, String>? _runEnvironment() {
+    final sdkRoot =
+        Platform.environment['ANDROID_HOME'] ??
+        Platform.environment['ANDROID_SDK_ROOT'];
+    if (sdkRoot != null && sdkRoot.isNotEmpty) {
+      return null;
+    }
+    final managedSdk = _managedAndroidSdkDirectory();
+    if (!managedSdk.existsSync()) {
+      return null;
+    }
+    return {
+      ...Platform.environment,
+      'ANDROID_HOME': managedSdk.path,
+      'ANDROID_SDK_ROOT': managedSdk.path,
+    };
+  }
+
+  File _managedFlutterExecutable() {
+    return File(
+      _joinPath(
+        _joinPath(_userDataDirectory().path, 'pack_foundry/flutter/bin'),
+        'flutter',
+      ),
+    );
+  }
+
+  Directory _managedAndroidSdkDirectory() {
+    return Directory(
+      _joinPath(_userDataDirectory().path, 'pack_foundry/android-sdk'),
+    );
+  }
+
+  Directory _userDataDirectory() {
+    final xdgDataHome = Platform.environment['XDG_DATA_HOME'];
+    if (xdgDataHome != null && xdgDataHome.isNotEmpty) {
+      return Directory(xdgDataHome);
+    }
+    final home = Platform.environment['HOME'];
+    if (home != null && home.isNotEmpty) {
+      return Directory(_joinPath(home, '.local/share'));
+    }
+    return Directory.systemTemp;
   }
 
   void _replaceRoadmapWithPreview() {
@@ -1209,7 +1675,15 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
               target.artifact,
             ),
       ],
+      additionalDependencies: _additionalPackageDependencies(),
     );
+  }
+
+  Map<String, String> _additionalPackageDependencies() {
+    return {
+      'deb': _debAdditionalDependenciesController.text,
+      'rpm': _rpmAdditionalDependenciesController.text,
+    }..removeWhere((key, value) => value.trim().isEmpty);
   }
 
   void _applyProjectConfig(ProjectConfig config) {
@@ -1226,6 +1700,14 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       _restoreConfigText(_homepageUrlController, config.homepageUrl);
       _restoreConfigText(_licenseController, config.license);
       _restoreConfigText(_descriptionController, config.description);
+      _restoreConfigText(
+        _debAdditionalDependenciesController,
+        config.additionalDependencies['deb'],
+      );
+      _restoreConfigText(
+        _rpmAdditionalDependenciesController,
+        config.additionalDependencies['rpm'],
+      );
       if (config.windowWidth != null) {
         _widthController.text = config.windowWidth.toString();
       }
@@ -1265,6 +1747,29 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _showBuildSuccessDialog() async {
+    await SystemSound.play(SystemSoundType.alert);
+    if (!mounted) {
+      return;
+    }
+
+    final l10n = context.l10n;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.task_alt_outlined),
+        title: Text(l10n.buildSuccessTitle),
+        content: Text(l10n.buildSuccessMessage),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(l10n.ok),
+          ),
+        ],
+      ),
+    );
   }
 
   bool get _shouldAutofillAppName {
@@ -1439,6 +1944,112 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
     });
   }
 
+  Future<void> _choosePackageFile() async {
+    final file = await openFile(
+      acceptedTypeGroups: [
+        XTypeGroup(
+          label: context.l10n.packageTypeGroup,
+          extensions: [
+            'deb',
+            'rpm',
+            'AppImage',
+            'appimage',
+            'tar.gz',
+            'tgz',
+            'gz',
+            'apk',
+            'exe',
+            'zip',
+          ],
+        ),
+      ],
+      confirmButtonText: context.l10n.choosePackage,
+    );
+    if (file == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _isInspectingPackage = true;
+    });
+
+    try {
+      final inspection = await _packageInspectorService.inspect(file.path);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _packageInspection = inspection;
+        _packageMetadataController.text = _formatPackageFields(
+          inspection.fields,
+        );
+        _packageDependenciesController.text = inspection.dependencyText;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(context.l10n.packageInspectFailed(error.toString()));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isInspectingPackage = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _saveEditedPackage() async {
+    final inspection = _packageInspection;
+    if (inspection == null || !inspection.saveSupported) {
+      return;
+    }
+
+    setState(() {
+      _isInspectingPackage = true;
+    });
+
+    try {
+      final outputPath = await _packageInspectorService.saveDebMetadata(
+        packagePath: inspection.path,
+        metadata: _packageMetadataController.text,
+        dependencies: _packageDependenciesController.text,
+      );
+      final refreshed = await _packageInspectorService.inspect(outputPath);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _packageInspection = refreshed;
+        _packageMetadataController.text = _formatPackageFields(
+          refreshed.fields,
+        );
+        _packageDependenciesController.text = refreshed.dependencyText;
+      });
+      _showSnackBar(context.l10n.packageSaved(outputPath));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(context.l10n.packageSaveFailed(error.toString()));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isInspectingPackage = false;
+        });
+      }
+    }
+  }
+
+  String _formatPackageFields(Map<String, String> fields) {
+    if (fields.isEmpty) {
+      return '';
+    }
+    return [
+      for (final entry in fields.entries) '${entry.key}: ${entry.value}',
+    ].join('\n');
+  }
+
   void _replaceLog(BuildLogEntry entry) {
     setState(() {
       _buildLog
@@ -1467,6 +2078,11 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
         label: l10n.build,
         icon: Icons.rocket_launch_outlined,
         selectedIcon: Icons.rocket_launch,
+      ),
+      _Workspace(
+        label: l10n.packageInspectorShort,
+        icon: Icons.inventory_2_outlined,
+        selectedIcon: Icons.inventory_2,
       ),
     ];
 
@@ -1501,9 +2117,18 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
               descriptionController: _descriptionController,
               widthController: _widthController,
               heightController: _heightController,
+              debAdditionalDependenciesController:
+                  _debAdditionalDependenciesController,
+              rpmAdditionalDependenciesController:
+                  _rpmAdditionalDependenciesController,
+              packageInspection: _packageInspection,
+              packageMetadataController: _packageMetadataController,
+              packageDependenciesController: _packageDependenciesController,
+              isInspectingPackage: _isInspectingPackage,
               targets: _targets,
               selectedTargets: selectedTargets,
               isBuilding: _isBuilding,
+              isRunningProject: _isRunningProject,
               progress: _buildProgress,
               roadmapSteps: _roadmapSteps,
               log: _buildLog,
@@ -1517,8 +2142,12 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
               onExportConfig: _exportProjectConfig,
               onChooseIcon: _chooseIconFile,
               onChooseOutput: _chooseOutputFolder,
+              onChoosePackage: _choosePackageFile,
               onTargetChanged: _setTargetSelection,
+              onSaveEditedPackage: _saveEditedPackage,
               onBuild: _runBuild,
+              onRunProject: _runProjectWithoutBuild,
+              onStopProject: _stopRunningProject,
             );
 
             if (isWide) {
@@ -1641,9 +2270,16 @@ class _WorkspaceContent extends StatelessWidget {
     required this.descriptionController,
     required this.widthController,
     required this.heightController,
+    required this.debAdditionalDependenciesController,
+    required this.rpmAdditionalDependenciesController,
+    required this.packageInspection,
+    required this.packageMetadataController,
+    required this.packageDependenciesController,
+    required this.isInspectingPackage,
     required this.targets,
     required this.selectedTargets,
     required this.isBuilding,
+    required this.isRunningProject,
     required this.progress,
     required this.roadmapSteps,
     required this.log,
@@ -1657,8 +2293,12 @@ class _WorkspaceContent extends StatelessWidget {
     required this.onExportConfig,
     required this.onChooseIcon,
     required this.onChooseOutput,
+    required this.onChoosePackage,
     required this.onTargetChanged,
+    required this.onSaveEditedPackage,
     required this.onBuild,
+    required this.onRunProject,
+    required this.onStopProject,
   });
 
   final int index;
@@ -1679,9 +2319,16 @@ class _WorkspaceContent extends StatelessWidget {
   final TextEditingController descriptionController;
   final TextEditingController widthController;
   final TextEditingController heightController;
+  final TextEditingController debAdditionalDependenciesController;
+  final TextEditingController rpmAdditionalDependenciesController;
+  final PackageInspection? packageInspection;
+  final TextEditingController packageMetadataController;
+  final TextEditingController packageDependenciesController;
+  final bool isInspectingPackage;
   final List<BuildTarget> targets;
   final int selectedTargets;
   final bool isBuilding;
+  final bool isRunningProject;
   final int progress;
   final List<BuildRoadmapStep> roadmapSteps;
   final List<BuildLogEntry> log;
@@ -1695,8 +2342,12 @@ class _WorkspaceContent extends StatelessWidget {
   final VoidCallback onExportConfig;
   final VoidCallback onChooseIcon;
   final VoidCallback onChooseOutput;
+  final VoidCallback onChoosePackage;
   final void Function(BuildTarget target, bool selected) onTargetChanged;
+  final VoidCallback onSaveEditedPackage;
   final VoidCallback onBuild;
+  final VoidCallback onRunProject;
+  final VoidCallback onStopProject;
 
   @override
   Widget build(BuildContext context) {
@@ -1746,11 +2397,17 @@ class _WorkspaceContent extends StatelessWidget {
           onChooseOutput: onChooseOutput,
           onChanged: onTargetChanged,
         ),
+        const SizedBox(height: 16),
+        PackageDependenciesPanel(
+          debController: debAdditionalDependenciesController,
+          rpmController: rpmAdditionalDependenciesController,
+        ),
       ],
-      _ => [
+      2 => [
         BuildPanel(
           selectedTargets: selectedTargets,
           isBuilding: isBuilding,
+          isRunning: isRunningProject,
           progress: progress,
           roadmapSteps: roadmapSteps,
           log: log,
@@ -1770,8 +2427,24 @@ class _WorkspaceContent extends StatelessWidget {
                   windowWidth: int.tryParse(widthController.text),
                   windowHeight: int.tryParse(heightController.text),
                   targets: targets,
+                  additionalDependencies: {
+                    'deb': debAdditionalDependenciesController.text,
+                    'rpm': rpmAdditionalDependenciesController.text,
+                  }..removeWhere((key, value) => value.trim().isEmpty),
                 ),
           onBuild: onBuild,
+          onRun: onRunProject,
+          onStop: onStopProject,
+        ),
+      ],
+      _ => [
+        PackageInspectorPanel(
+          inspection: packageInspection,
+          metadataController: packageMetadataController,
+          dependenciesController: packageDependenciesController,
+          isBusy: isInspectingPackage,
+          onChoosePackage: onChoosePackage,
+          onSaveEditedPackage: onSaveEditedPackage,
         ),
       ],
     };

@@ -136,6 +136,7 @@ class AppLocalizations {
   String get appImageBuildGroupTitle => 'APPIMAGE';
   String get tarGzBuildGroupTitle => 'TAR.GZ';
   String get windowsBuildGroupTitle => 'EXE';
+  String get androidBuildGroupTitle => 'APK';
   String get installMissingTools =>
       _isRu ? 'Установить недостающие инструменты' : 'Install missing tools';
   String get installingTools => _isRu ? 'Установка...' : 'Installing...';
@@ -218,6 +219,9 @@ class AppLocalizations {
   String get windowsBuildGroupSubtitle => _isRu
       ? 'PackFoundry создаёт zip-набор: проект, Inno Setup config и скрипт сборки для Windows.'
       : 'PackFoundry creates a zip kit with the project, Inno Setup config and Windows build script.';
+  String get androidBuildGroupSubtitle => _isRu
+      ? 'Сборка Android APK через Flutter и локальный Android SDK.'
+      : 'Build Android APK through Flutter and the local Android SDK.';
   String get hostSystemToolName => _isRu ? 'Система хоста' : 'Host system';
   String get hostSystemToolNote => _isRu
       ? 'Определяет, какие пакеты можно собрать нативно без контейнера.'
@@ -303,6 +307,53 @@ class AppLocalizations {
       : 'Required by the Android Gradle toolchain for APK/AAB builds.';
 
   String get installers => _isRu ? 'Установщики' : 'Installers';
+  String get additionalPackageDependencies =>
+      _isRu ? 'Дополнительные зависимости' : 'Additional dependencies';
+  String get additionalPackageDependenciesHelp => _isRu
+      ? 'Эти зависимости добавляются к стандартным зависимостям выбранного формата пакета при сборке.'
+      : 'These dependencies are appended to the default dependency list for the selected package format during build.';
+  String get debAdditionalDependenciesHelp => _isRu
+      ? 'Одна зависимость на строку. Можно использовать альтернативы через |.'
+      : 'One dependency per line. Alternatives with | are allowed.';
+  String get rpmAdditionalDependenciesHelp =>
+      _isRu ? 'Одна зависимость на строку.' : 'One dependency per line.';
+  String get packageInspectorShort => _isRu ? 'Пакеты' : 'Packages';
+  String get packageInspector =>
+      _isRu ? 'Инспектор пакета' : 'Package Inspector';
+  String get choosePackage => _isRu ? 'Выбрать пакет' : 'Choose package';
+  String get packageTypeGroup => _isRu ? 'Пакеты' : 'Packages';
+  String get noPackageSelected => _isRu
+      ? 'Выберите готовый пакет из файловой системы, чтобы посмотреть его метаданные и зависимости.'
+      : 'Choose an existing package from the filesystem to inspect metadata and dependencies.';
+  String get packageFormat => _isRu ? 'Формат пакета' : 'Package format';
+  String get packageFileName => _isRu ? 'Файл' : 'File';
+  String get packageSize => _isRu ? 'Размер' : 'Size';
+  String get packagePath => _isRu ? 'Путь' : 'Path';
+  String get packageEditMode => _isRu ? 'Редактирование' : 'Editing';
+  String get packageEditable => _isRu ? 'Доступно' : 'Available';
+  String get packageReadonly => _isRu ? 'Только просмотр' : 'Read only';
+  String get packageMetadata => _isRu ? 'Метаданные' : 'Metadata';
+  String get packageMetadataHelp => _isRu
+      ? 'Для DEB это содержимое control-файла. Изменения сохраняются в новую копию пакета.'
+      : 'For DEB this is the control file content. Changes are saved into a new package copy.';
+  String get packageReadonlyHelp => _isRu
+      ? 'Этот формат нельзя безопасно патчить после сборки. Измените данные в проекте и пересоберите пакет.'
+      : 'This format cannot be safely patched after build. Change metadata in the project and rebuild the package.';
+  String get packageDependencies => _isRu ? 'Зависимости' : 'Dependencies';
+  String get packageDependenciesHelp => _isRu
+      ? 'Одна зависимость на строку. Для DEB можно использовать альтернативы через |, например libgtk-3-0 | libgtk-3-0t64.'
+      : 'One dependency per line. DEB alternatives with | are allowed, for example libgtk-3-0 | libgtk-3-0t64.';
+  String get saveEditedPackage =>
+      _isRu ? 'Сохранить измененную копию' : 'Save edited copy';
+  String packageSaved(String path) => _isRu
+      ? 'Измененный пакет сохранен: $path'
+      : 'Edited package saved: $path';
+  String packageInspectFailed(String error) => _isRu
+      ? 'Не удалось прочитать пакет. $error'
+      : 'Could not inspect package. $error';
+  String packageSaveFailed(String error) => _isRu
+      ? 'Не удалось сохранить пакет. $error'
+      : 'Could not save package. $error';
   String get toolchain => _isRu ? 'Инструменты' : 'Toolchain';
   String get build => _isRu ? 'Сборка' : 'Build';
   String selectedTargets(int count) {
@@ -315,6 +366,16 @@ class AppLocalizations {
   String get building => _isRu ? 'Сборка...' : 'Building...';
   String get buildInstallers =>
       _isRu ? 'Собрать установщики' : 'Build installers';
+  String get runWithoutBuild =>
+      _isRu ? 'Запустить без сборки' : 'Run without build';
+  String get runningApp => _isRu ? 'Приложение запущено' : 'App is running';
+  String get stopRunningApp => _isRu ? 'Остановить' : 'Stop';
+  String get buildSuccessTitle =>
+      _isRu ? 'Сборка завершена' : 'Build completed';
+  String get buildSuccessMessage => _isRu
+      ? 'Выбранные установщики успешно собраны и сохранены в папку экспорта.'
+      : 'Selected installers were built successfully and saved to the output folder.';
+  String get ok => _isRu ? 'OK' : 'OK';
   String get visualBuildMode => _isRu ? 'Визуально' : 'Visual';
   String get commandsBuildMode => _isRu ? 'Команды' : 'Commands';
   String get fullRoadmapMode => _isRu ? 'Полное' : 'Full';
@@ -420,6 +481,8 @@ class AppLocalizations {
       'deb-build' => _isRu ? 'DEB сборка' : 'DEB build',
       'deb-package' => _isRu ? 'DEB пакет' : 'DEB package',
       'windows-kit' => _isRu ? 'WINDOWS KIT' : 'WINDOWS KIT',
+      'android-build' => _isRu ? 'APK сборка' : 'APK build',
+      'apk-export' => _isRu ? 'APK экспорт' : 'APK export',
       'summary' => _isRu ? 'Экспорт' : 'Export',
       'cleanup' => _isRu ? 'Очистка' : 'Cleanup',
       _ => fallback,
@@ -478,6 +541,14 @@ class AppLocalizations {
         _isRu
             ? 'Создание zip-набора для сборки EXE на Windows.'
             : 'Create a zip kit for building the EXE on Windows.',
+      'android-build' =>
+        _isRu
+            ? 'Сборка Android release APK через Flutter и Gradle.'
+            : 'Compile the Android release APK through Flutter and Gradle.',
+      'apk-export' =>
+        _isRu
+            ? 'Поиск готового APK и копирование в папку экспорта.'
+            : 'Find the generated APK and copy it to the export folder.',
       'summary' =>
         _isRu
             ? 'Проверка и вывод списка созданных артефактов.'
@@ -704,6 +775,11 @@ const _russianVisualRoadmapTitles = <String, String>{
   'windows-kit:project': 'Копирование проекта Windows',
   'windows-kit:scripts': 'Скрипты Windows',
   'windows-kit:archive': 'Архив Windows kit',
+  'android-build:dependencies': 'Зависимости Android',
+  'android-build:gradle': 'Gradle release build',
+  'android-build:signing': 'Подпись APK',
+  'apk-export:locate': 'Поиск APK',
+  'apk-export:copy': 'Экспорт APK',
   'summary:verify': 'Проверка артефактов',
   'summary:report': 'Итоги сборки',
   'cleanup:ownership': 'Подготовка очистки',
@@ -755,6 +831,13 @@ const _russianVisualRoadmapDescriptions = <String, String>{
   'windows-kit:project': 'Копируем подготовленный Flutter-проект в набор.',
   'windows-kit:scripts': 'Генерируем PowerShell и конфигурацию Inno Setup.',
   'windows-kit:archive': 'Упаковываем переносимый Windows build kit в zip.',
+  'android-build:dependencies':
+      'Получаем Flutter-зависимости перед Android-сборкой.',
+  'android-build:gradle': 'Запускаем Flutter и Gradle для release-сборки APK.',
+  'android-build:signing':
+      'Android toolchain подписывает итоговый APK доступным ключом.',
+  'apk-export:locate': 'Находим созданный файл app-release.apk.',
+  'apk-export:copy': 'Копируем APK в папку экспорта с именем приложения.',
   'summary:verify': 'Проверяем созданные файлы для всех выбранных целей.',
   'summary:report': 'Показываем пути к успешным пакетам и итог сборки.',
   'cleanup:ownership': 'Возвращаем владельца файлов после контейнерной сборки.',

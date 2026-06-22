@@ -15,6 +15,7 @@ class BuildConfiguration {
     required this.windowWidth,
     required this.windowHeight,
     required this.targets,
+    this.additionalDependencies = const {},
   });
 
   final String appName;
@@ -30,4 +31,5 @@ class BuildConfiguration {
   final int? windowWidth;
   final int? windowHeight;
   final List<BuildTarget> targets;
+  final Map<String, String> additionalDependencies;
 }

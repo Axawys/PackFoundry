@@ -25,19 +25,53 @@ class ToolchainPanel extends StatelessWidget {
     return Section(
       title: context.l10n.toolchain,
       icon: Icons.construction_outlined,
-      child: Column(
-        children: [
-          for (final group in groups) ...[
-            _ToolchainGroupCard(
-              group: group,
-              installing: installingTarget == group.installTarget,
-              onInstallTools: onInstallTools,
-              onRemoveTools: onRemoveTools,
-              onCancelInstall: onCancelInstall,
-            ),
-            if (group != groups.last) const SizedBox(height: 18),
-          ],
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final columns = switch (constraints.maxWidth) {
+            >= 1180 => 3,
+            >= 720 => 2,
+            _ => 1,
+          };
+          const spacing = 12.0;
+          final columnGroups = [
+            for (var column = 0; column < columns; column++)
+              [
+                for (
+                  var index = column;
+                  index < groups.length;
+                  index += columns
+                )
+                  groups[index],
+              ],
+          ];
+
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var column = 0; column < columnGroups.length; column++) ...[
+                Expanded(
+                  child: Column(
+                    children: [
+                      for (final group in columnGroups[column]) ...[
+                        _ToolchainGroupCard(
+                          group: group,
+                          installing: installingTarget == group.installTarget,
+                          onInstallTools: onInstallTools,
+                          onRemoveTools: onRemoveTools,
+                          onCancelInstall: onCancelInstall,
+                        ),
+                        if (group != columnGroups[column].last)
+                          const SizedBox(height: spacing),
+                      ],
+                    ],
+                  ),
+                ),
+                if (column != columnGroups.length - 1)
+                  const SizedBox(width: spacing),
+              ],
+            ],
+          );
+        },
       ),
     );
   }

@@ -8,7 +8,7 @@ class BuildTarget {
 
   final String platform;
   final String artifact;
-  final TargetStatus status;
+  TargetStatus status;
   bool selected;
 
   bool get canSelect {

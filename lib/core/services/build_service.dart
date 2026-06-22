@@ -20,6 +20,8 @@ class BuildService {
   static const _stepDebBuild = 'deb-build';
   static const _stepDebPackage = 'deb-package';
   static const _stepWindowsKit = 'windows-kit';
+  static const _stepAndroidBuild = 'android-build';
+  static const _stepApkExport = 'apk-export';
   static const _stepSummary = 'summary';
   static const _stepCleanup = 'cleanup';
 
@@ -69,6 +71,9 @@ class BuildService {
     final windowsTargets = selectedTargets
         .where((target) => target.platform == 'Windows')
         .toList();
+    final androidTargets = selectedTargets
+        .where((target) => target.platform == 'Android')
+        .toList();
 
     yield BuildEvent.roadmapPlan(createRoadmapPlan(selectedTargets));
 
@@ -112,7 +117,9 @@ class BuildService {
       final unsupportedTargets = selectedTargets
           .where(
             (target) =>
-                target.platform != 'Linux' && target.platform != 'Windows',
+                target.platform != 'Linux' &&
+                target.platform != 'Windows' &&
+                target.platform != 'Android',
           )
           .toList();
       for (final target in unsupportedTargets) {
@@ -125,12 +132,14 @@ class BuildService {
         );
       }
 
-      if (linuxTargets.isEmpty && windowsTargets.isEmpty) {
+      if (linuxTargets.isEmpty &&
+          windowsTargets.isEmpty &&
+          androidTargets.isEmpty) {
         yield const BuildEvent.log(
           BuildLogEntry(
             title: 'No supported targets selected',
             detail:
-                'Select AppImage, deb, rpm, tar.gz or Windows EXE build kit.',
+                'Select AppImage, deb, rpm, tar.gz, APK or Windows EXE build kit.',
             state: BuildLogState.warning,
           ),
         );
@@ -307,6 +316,30 @@ class BuildService {
         );
       }
 
+      if (androidTargets.any((target) => target.artifact == 'APK')) {
+        yield const BuildEvent.progress(58);
+        yield const BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepAndroidBuild,
+            state: BuildRoadmapStepState.running,
+            progress: 10,
+            detail: 'Running flutter build apk --release.',
+          ),
+        );
+        yield const BuildEvent.log(
+          BuildLogEntry(
+            title: 'Building Android APK',
+            detail: 'flutter build apk --release',
+            state: BuildLogState.running,
+          ),
+        );
+        yield* _createApkPackage(
+          configuration: configuration,
+          workspace: workspace,
+          outputDirectory: outputDirectory,
+        );
+      }
+
       if (debTargets.isNotEmpty) {
         yield const BuildEvent.progress(60);
         yield const BuildEvent.roadmapUpdate(
@@ -402,18 +435,25 @@ class BuildService {
     final windowsTargets = selectedTargets
         .where((target) => target.platform == 'Windows')
         .toList();
-    if (linuxTargets.isEmpty && windowsTargets.isEmpty) {
+    final androidTargets = selectedTargets
+        .where((target) => target.platform == 'Android')
+        .toList();
+    if (linuxTargets.isEmpty &&
+        windowsTargets.isEmpty &&
+        androidTargets.isEmpty) {
       return const [];
     }
     return _createRoadmapPlan(
       linuxTargets: linuxTargets,
       windowsTargets: windowsTargets,
+      androidTargets: androidTargets,
     );
   }
 
   List<BuildRoadmapStep> _createRoadmapPlan({
     required List<BuildTarget> linuxTargets,
     required List<BuildTarget> windowsTargets,
+    required List<BuildTarget> androidTargets,
   }) {
     final hasDeb = linuxTargets.any(
       (target) => target.artifact == 'deb package',
@@ -430,6 +470,7 @@ class BuildService {
     final hasWindowsKit = windowsTargets.any(
       (target) => target.artifact == 'Inno Setup exe',
     );
+    final hasApk = androidTargets.any((target) => target.artifact == 'APK');
     final hasLocalBuild = hasRpm || hasAppImage || hasTarGz;
     var number = 1;
 
@@ -507,6 +548,20 @@ class BuildService {
               'Create a transferable zip with project, Inno Setup config and Windows build script.',
           estimatedSeconds: 20,
         ),
+      if (hasApk) ...[
+        step(
+          id: _stepAndroidBuild,
+          title: 'APK build',
+          description: 'Compile the Android release APK with Flutter.',
+          estimatedSeconds: 180,
+        ),
+        step(
+          id: _stepApkExport,
+          title: 'APK export',
+          description: 'Find the generated APK and copy it to export.',
+          estimatedSeconds: 5,
+        ),
+      ],
       if (hasDeb) ...[
         step(
           id: _stepDebContainer,
@@ -1030,6 +1085,110 @@ class BuildService {
         await tempDirectory.delete(recursive: true);
       }
     }
+  }
+
+  Stream<BuildEvent> _createApkPackage({
+    required BuildConfiguration configuration,
+    required Directory workspace,
+    required Directory outputDirectory,
+  }) async* {
+    final buildResult = await _runFlutterApkBuild(workspace.path);
+    if (buildResult.exitCode != 0) {
+      yield BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepAndroidBuild,
+          state: BuildRoadmapStepState.warning,
+          progress: 100,
+          detail: _shortProcessOutput(buildResult),
+        ),
+      );
+      yield BuildEvent.log(
+        BuildLogEntry(
+          title: 'Android APK build failed',
+          detail: _shortProcessOutput(buildResult),
+          state: BuildLogState.warning,
+        ),
+      );
+      return;
+    }
+
+    yield const BuildEvent.roadmapUpdate(
+      BuildRoadmapUpdate(
+        id: _stepAndroidBuild,
+        state: BuildRoadmapStepState.success,
+        progress: 100,
+        detail: 'Android release APK was compiled.',
+      ),
+    );
+    yield BuildEvent.log(
+      BuildLogEntry(
+        title: 'Android APK build completed',
+        detail: _shortProcessOutput(buildResult),
+        state: BuildLogState.success,
+      ),
+    );
+
+    yield const BuildEvent.roadmapUpdate(
+      BuildRoadmapUpdate(
+        id: _stepApkExport,
+        state: BuildRoadmapStepState.running,
+        progress: 40,
+        detail: 'Looking for build/app/outputs/flutter-apk/app-release.apk.',
+      ),
+    );
+
+    final apkFile = _findReleaseApk(workspace);
+    if (apkFile == null) {
+      yield const BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepApkExport,
+          state: BuildRoadmapStepState.warning,
+          progress: 100,
+          detail: 'Expected build/app/outputs/flutter-apk/app-release.apk.',
+        ),
+      );
+      yield const BuildEvent.log(
+        BuildLogEntry(
+          title: 'Android APK not found',
+          detail: 'Expected build/app/outputs/flutter-apk/app-release.apk.',
+          state: BuildLogState.warning,
+        ),
+      );
+      return;
+    }
+
+    final appName = configuration.appName.trim().isEmpty
+        ? 'Flutter App'
+        : configuration.appName.trim();
+    final version = _packageVersion(configuration);
+    final outputFile = File(
+      _joinPath(
+        outputDirectory.path,
+        version == null
+            ? '${_safeFileName(appName)}.apk'
+            : '${_safeFileName(appName)}_$version.apk',
+      ),
+    );
+    if (outputFile.existsSync()) {
+      await outputFile.delete();
+    }
+    await apkFile.copy(outputFile.path);
+
+    yield BuildEvent.roadmapUpdate(
+      BuildRoadmapUpdate(
+        id: _stepApkExport,
+        state: BuildRoadmapStepState.success,
+        progress: 100,
+        detail: outputFile.path,
+      ),
+    );
+    yield BuildEvent.log(
+      BuildLogEntry(
+        title: 'Created Android APK',
+        detail: outputFile.path,
+        state: BuildLogState.success,
+      ),
+    );
   }
 
   Future<String?> _copyWindowsKitIcon({
@@ -1755,6 +1914,11 @@ Terminal=false
         : '%{buildroot}/usr/share/icons/hicolor/256x256/apps/$desktopFileId.png';
 
     final homepage = configuration.homepageUrl.trim();
+    final rpmRequires = _packageDependencies(
+      configuration,
+      type: 'rpm',
+      defaults: const ['gtk3', 'libstdc++', 'xz-libs'],
+    );
     return '''%global __brp_check_rpaths %{nil}
 
 Name:           $packageName
@@ -1762,7 +1926,7 @@ Version:        $version
 Release:        $release%{?dist}
 Summary:        ${_rpmHeaderValue(_packageSummary(configuration, appName))}
 License:        ${_rpmHeaderValue(_packageLicense(configuration))}
-${homepage.isEmpty ? '' : 'URL:            ${_rpmHeaderValue(homepage)}\n'}Requires:       gtk3, libstdc++, xz-libs
+${homepage.isEmpty ? '' : 'URL:            ${_rpmHeaderValue(homepage)}\n'}Requires:       $rpmRequires
 
 %description
 ${_rpmDescription(_packageDescription(configuration, appName))}
@@ -1989,6 +2153,8 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
       '-e',
       'PACKFOUNDRY_HOMEPAGE=${_dockerEnvValue(configuration.homepageUrl.trim())}',
       '-e',
+      'PACKFOUNDRY_DEB_DEPENDS=${_dockerEnvValue(_packageDependencies(configuration, type: 'deb', defaults: const ['libgtk-3-0', 'libstdc++6', 'liblzma5']))}',
+      '-e',
       'PACKFOUNDRY_OUTPUT_BASENAME=${_dockerEnvValue(outputFileName)}',
       if (iconPath != null) ...[
         '-e',
@@ -2164,7 +2330,7 @@ Section: utils
 Priority: optional
 Architecture: $arch
 Maintainer: $PACKFOUNDRY_MAINTAINER
-Depends: libgtk-3-0, libstdc++6, liblzma5
+Depends: $PACKFOUNDRY_DEB_DEPENDS
 Description: $PACKFOUNDRY_DESCRIPTION
  Packaged with PackFoundry.
 EOF
@@ -2562,8 +2728,8 @@ Terminal=false
   Future<ProcessResult> _runFlutterBuild(String projectPath) async {
     final candidates = [
       'flutter',
-      if (File('/home/axawys/development/flutter/bin/flutter').existsSync())
-        '/home/axawys/development/flutter/bin/flutter',
+      if (_managedFlutterExecutable().existsSync())
+        _managedFlutterExecutable().path,
     ];
 
     ProcessException? lastError;
@@ -2588,6 +2754,112 @@ Terminal=false
           'linux',
           '--release',
         ], 'Flutter executable was not found.');
+  }
+
+  Future<ProcessResult> _runFlutterApkBuild(String projectPath) async {
+    final candidates = [
+      'flutter',
+      if (_managedFlutterExecutable().existsSync())
+        _managedFlutterExecutable().path,
+    ];
+
+    ProcessException? lastError;
+    for (final executable in candidates) {
+      try {
+        return await Process.run(
+          executable,
+          ['build', 'apk', '--release'],
+          workingDirectory: projectPath,
+          runInShell: true,
+          environment: _androidBuildEnvironment(),
+          stdoutEncoding: utf8,
+          stderrEncoding: utf8,
+        );
+      } on ProcessException catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError ??
+        const ProcessException('flutter', [
+          'build',
+          'apk',
+          '--release',
+        ], 'Flutter executable was not found.');
+  }
+
+  File? _findReleaseApk(Directory projectDirectory) {
+    final standardApk = File(
+      _joinPath(
+        projectDirectory.path,
+        'build/app/outputs/flutter-apk/app-release.apk',
+      ),
+    );
+    if (standardApk.existsSync()) {
+      return standardApk;
+    }
+
+    final outputDirectory = Directory(
+      _joinPath(projectDirectory.path, 'build/app/outputs'),
+    );
+    if (!outputDirectory.existsSync()) {
+      return null;
+    }
+
+    for (final entity in outputDirectory.listSync(recursive: true)) {
+      if (entity is File &&
+          entity.path.endsWith('.apk') &&
+          _basename(entity.path).contains('release')) {
+        return entity;
+      }
+    }
+    return null;
+  }
+
+  Map<String, String>? _androidBuildEnvironment() {
+    final sdkRoot =
+        Platform.environment['ANDROID_HOME'] ??
+        Platform.environment['ANDROID_SDK_ROOT'];
+    if (sdkRoot != null && sdkRoot.isNotEmpty) {
+      return null;
+    }
+
+    final managedSdk = _managedAndroidSdkDirectory();
+    if (!managedSdk.existsSync()) {
+      return null;
+    }
+    return {
+      ...Platform.environment,
+      'ANDROID_HOME': managedSdk.path,
+      'ANDROID_SDK_ROOT': managedSdk.path,
+    };
+  }
+
+  File _managedFlutterExecutable() {
+    return File(
+      _joinPath(
+        _joinPath(_userDataDirectory().path, 'pack_foundry/flutter/bin'),
+        'flutter',
+      ),
+    );
+  }
+
+  Directory _managedAndroidSdkDirectory() {
+    return Directory(
+      _joinPath(_userDataDirectory().path, 'pack_foundry/android-sdk'),
+    );
+  }
+
+  Directory _userDataDirectory() {
+    final xdgDataHome = Platform.environment['XDG_DATA_HOME'];
+    if (xdgDataHome != null && xdgDataHome.isNotEmpty) {
+      return Directory(xdgDataHome);
+    }
+    final home = Platform.environment['HOME'];
+    if (home != null && home.isNotEmpty) {
+      return Directory(_joinPath(home, '.local/share'));
+    }
+    return Directory.systemTemp;
   }
 
   Future<Directory?> _findLinuxBundle(Directory projectDirectory) async {
@@ -2723,6 +2995,43 @@ Terminal=false
         .replaceAll('\n', ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
+  }
+
+  String _packageDependencies(
+    BuildConfiguration configuration, {
+    required String type,
+    required List<String> defaults,
+  }) {
+    final seen = <String>{};
+    final dependencies = <String>[];
+    void add(String value) {
+      final normalized = value.trim();
+      if (normalized.isEmpty || !seen.add(normalized.toLowerCase())) {
+        return;
+      }
+      dependencies.add(normalized);
+    }
+
+    for (final dependency in defaults) {
+      add(dependency);
+    }
+    final extra = configuration.additionalDependencies[type] ?? '';
+    for (final dependency in _splitDependencyInput(extra)) {
+      add(dependency);
+    }
+    return dependencies.join(', ');
+  }
+
+  List<String> _splitDependencyInput(String value) {
+    final withoutFieldName = value.replaceFirst(
+      RegExp(r'^\s*(Depends|Requires)\s*:', caseSensitive: false),
+      '',
+    );
+    return [
+      for (final part
+          in withoutFieldName.replaceAll('\r\n', '\n').split(RegExp(r'[\n,]')))
+        if (part.trim().isNotEmpty) part.trim(),
+    ];
   }
 
   String? _packageVersion(

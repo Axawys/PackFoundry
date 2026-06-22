@@ -95,6 +95,33 @@ void main() {
     );
   });
 
+  test('creates an APK roadmap preview from Android target', () {
+    final targets = [
+      BuildTarget(
+        platform: 'Android',
+        artifact: 'APK',
+        status: TargetStatus.ready,
+        selected: true,
+      ),
+    ];
+
+    final steps = BuildService().createRoadmapPlan(targets);
+
+    expect(
+      steps.map((step) => step.id),
+      containsAll(<String>[
+        'project',
+        'workspace',
+        'android-build',
+        'apk-export',
+        'summary',
+        'cleanup',
+      ]),
+    );
+    expect(steps.map((step) => step.id), isNot(contains('local-build')));
+    expect(steps.map((step) => step.id), isNot(contains('bundle')));
+  });
+
   test('saves and loads PackFoundry project config', () async {
     final tempDir = await Directory.systemTemp.createTemp(
       'pack_foundry_config_test_',
@@ -117,6 +144,10 @@ void main() {
       windowWidth: 1280,
       windowHeight: 800,
       packageTypes: const ['appimage', 'deb', 'rpm'],
+      additionalDependencies: const {
+        'deb': 'libgtk-3-0 | libgtk-3-0t64',
+        'rpm': 'webkit2gtk4.1',
+      },
     );
 
     await service.save(configPath, config);
@@ -127,6 +158,8 @@ void main() {
     expect(loaded.iconPath, '${tempDir.path}/assets/icon.png');
     expect(loaded.releaseTag, 'v2.1.1');
     expect(loaded.packageTypes, ['appimage', 'deb', 'rpm']);
+    expect(loaded.additionalDependencies['deb'], 'libgtk-3-0 | libgtk-3-0t64');
+    expect(loaded.additionalDependencies['rpm'], 'webkit2gtk4.1');
   });
 
   testWidgets('shows roadmap before starting the selected build', (
@@ -219,6 +252,9 @@ void main() {
                 targets: [target],
               ),
               onBuild: () {},
+              isRunning: false,
+              onRun: () {},
+              onStop: () {},
             ),
           ),
         ),
@@ -389,6 +425,9 @@ void main() {
               ],
               log: const [],
               onBuild: () {},
+              isRunning: false,
+              onRun: () {},
+              onStop: () {},
             ),
           ),
         ),
@@ -458,6 +497,9 @@ void main() {
               ],
               log: const [],
               onBuild: () {},
+              isRunning: false,
+              onRun: () {},
+              onStop: () {},
             ),
           ),
         ),
@@ -487,6 +529,9 @@ void main() {
               roadmapSteps: steps,
               log: const [],
               onBuild: () {},
+              isRunning: false,
+              onRun: () {},
+              onStop: () {},
             ),
           ),
         ),
@@ -556,6 +601,72 @@ void main() {
     );
   });
 
+  testWidgets('holds fast roadmap completion briefly before final state', (
+    tester,
+  ) async {
+    Widget buildPanel(BuildRoadmapStep step) {
+      return MaterialApp(
+        localizationsDelegates: const [
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: BuildPanel(
+              selectedTargets: 1,
+              isBuilding: false,
+              isRunning: false,
+              progress: 0,
+              roadmapSteps: [step],
+              log: const [],
+              onBuild: () {},
+              onRun: () {},
+              onStop: () {},
+            ),
+          ),
+        ),
+      );
+    }
+
+    await tester.pumpWidget(
+      buildPanel(
+        const BuildRoadmapStep(
+          id: 'summary',
+          number: 1,
+          title: 'Export',
+          description: 'Verify and report generated artifacts.',
+          state: BuildRoadmapStepState.pending,
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(
+      buildPanel(
+        const BuildRoadmapStep(
+          id: 'summary',
+          number: 1,
+          title: 'Export',
+          description: 'Verify and report generated artifacts.',
+          state: BuildRoadmapStepState.success,
+          progress: 100,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 2600));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
   testWidgets('expands one roadmap card at a time', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -595,6 +706,9 @@ void main() {
               ],
               log: const [],
               onBuild: () {},
+              isRunning: false,
+              onRun: () {},
+              onStop: () {},
             ),
           ),
         ),

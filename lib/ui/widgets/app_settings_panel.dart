@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -166,11 +168,12 @@ class _PathPickerRow extends StatelessWidget {
         Container(
           width: 48,
           height: 48,
+          clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(icon),
+          child: _IconPreview(path: path, fallbackIcon: icon),
         ),
         const SizedBox(width: 12),
         OutlinedButton.icon(
@@ -183,6 +186,53 @@ class _PathPickerRow extends StatelessWidget {
           child: Text(path ?? placeholder, overflow: TextOverflow.ellipsis),
         ),
       ],
+    );
+  }
+}
+
+class _IconPreview extends StatelessWidget {
+  const _IconPreview({required this.path, required this.fallbackIcon});
+
+  final String? path;
+  final IconData fallbackIcon;
+
+  @override
+  Widget build(BuildContext context) {
+    final iconPath = path;
+    if (iconPath == null || iconPath.trim().isEmpty) {
+      return Icon(fallbackIcon);
+    }
+
+    final file = File(iconPath);
+    if (!file.existsSync()) {
+      return Icon(fallbackIcon);
+    }
+
+    final extension = iconPath.split('.').last.toLowerCase();
+    if (extension == 'svg') {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.image_outlined,
+            size: 20,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+          Text(
+            'SVG',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Image.file(
+      file,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) => Icon(fallbackIcon),
     );
   }
 }

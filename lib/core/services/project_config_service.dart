@@ -40,6 +40,7 @@ class ProjectConfigService {
       windowWidth: config.windowWidth,
       windowHeight: config.windowHeight,
       packageTypes: config.packageTypes,
+      additionalDependencies: config.additionalDependencies,
     );
   }
 
