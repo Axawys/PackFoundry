@@ -23,11 +23,10 @@ PackFoundry — GUI-приложение на Flutter для упаковки Fl
 
 ## Скриншоты
 
-<img width="2152" height="1299" alt="Screenshot From 2026-06-12 19-18-27" src="https://github.com/user-attachments/assets/f433ca8c-2889-4227-b267-19eb0333a318" />
-<img width="2152" height="1299" alt="Screenshot From 2026-06-12 19-18-31" src="https://github.com/user-attachments/assets/39579b7e-9ce0-42d4-b46c-a329ea8051b1" />
-<img width="2152" height="1299" alt="Screenshot From 2026-06-12 19-18-36" src="https://github.com/user-attachments/assets/7a0a7519-f8c9-4997-820c-487a237f8521" />
-<img width="2152" height="1250" alt="Screenshot From 2026-06-12 18-45-36" src="https://github.com/user-attachments/assets/3d7b2a99-fc76-44ce-beaf-b02c287ae8e7" />
-
+<img width="2244" height="1417" alt="Screenshot From 2026-06-22 13-08-01" src="https://github.com/user-attachments/assets/695b3374-6ae2-465c-98e1-8bf34184327e" />
+<img width="2244" height="1417" alt="Screenshot From 2026-06-22 13-08-07" src="https://github.com/user-attachments/assets/56a8da1f-c8cb-46ac-b9a9-b4b6e8223b21" />
+<img width="2244" height="1417" alt="Screenshot From 2026-06-22 13-08-11" src="https://github.com/user-attachments/assets/9ebf3f72-ed7e-492c-87b0-6960db67a16e" />
+<img width="2244" height="1417" alt="Screenshot From 2026-06-22 13-08-25" src="https://github.com/user-attachments/assets/3e0cab92-e2ef-4bcb-958b-8d045983ef83" />
 
 
 ## Как это выглядит для пользователя
