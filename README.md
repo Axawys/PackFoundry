@@ -5,123 +5,215 @@
 <h1 align="center">PackFoundry</h1>
 
 <p align="center">
-  Собирайте установщики Flutter-приложений для Linux и Windows в пару кликов.
+  Сборка установщиков Flutter-приложений для Linux, Android и Windows в несколько кликов.
 </p>
 
-PackFoundry — GUI-приложение на Flutter для упаковки Flutter-проектов в готовые установщики и переносимые архивы без ручной рутины в терминале.
+PackFoundry — GUI-приложение на Flutter, которое помогает упаковывать Flutter-проекты в готовые пакеты без ручной рутины с `flutter build`, Docker/Podman, `rpmbuild`, `dpkg-deb`, AppImageTool, Android SDK и Windows/Inno Setup.
 
-Идея простая: выбрать папку проекта, заполнить метаданные релиза, отметить нужные форматы, выбрать папку экспорта и нажать Build. PackFoundry проверяет окружение, показывает доступные варианты сборки, создаёт временную копию проекта, запускает нужные инструменты и ведёт наглядный roadmap процесса.
+Главная идея: выбрать проект, указать метаданные релиза, отметить нужные форматы и нажать Build. PackFoundry проверяет окружение, готовит временную копию проекта, собирает пакеты, показывает наглядный roadmap и сохраняет артефакты в выбранную папку.
 
-## Главное
+## Возможности
 
-- Linux AppImage, `.deb`, `.rpm` и `tar.gz` из одного интерфейса.
-- Windows `.exe` через переносимый Windows build kit: PackFoundry создаёт zip, а внутри Windows запускается готовый PowerShell-скрипт.
-- Managed builders для сборки пакетов не под текущий дистрибутив: тяжёлое окружение создаётся один раз и переиспользуется.
-- Настройки инструментов по форматам: RPM, DEB, AppImage, tar.gz и EXE показывают, чего не хватает для сборки.
-- Пошаговый roadmap сборки с прогрессом, раскрываемыми этапами, логами и примерным оставшимся временем.
-- Русская и английская локализация, светлая/тёмная/системная тема.
-
-## Скриншоты
-
-<img width="2244" height="1417" alt="Screenshot From 2026-06-22 13-08-01" src="https://github.com/user-attachments/assets/695b3374-6ae2-465c-98e1-8bf34184327e" />
-<img width="2244" height="1417" alt="Screenshot From 2026-06-22 13-08-07" src="https://github.com/user-attachments/assets/56a8da1f-c8cb-46ac-b9a9-b4b6e8223b21" />
-<img width="2244" height="1417" alt="Screenshot From 2026-06-22 13-08-11" src="https://github.com/user-attachments/assets/9ebf3f72-ed7e-492c-87b0-6960db67a16e" />
-<img width="2244" height="1417" alt="Screenshot From 2026-06-22 13-08-25" src="https://github.com/user-attachments/assets/3e0cab92-e2ef-4bcb-958b-8d045983ef83" />
-
-
-## Как это выглядит для пользователя
-
-1. Открыть PackFoundry.
-2. Выбрать папку Flutter-проекта.
-3. Указать иконку, размер окна и метаданные релиза.
-4. В разделе «Установщики» выбрать нужные форматы, имя выходного пакета и папку экспорта.
-5. Нажать Build.
-6. Получить готовые артефакты в выбранной папке.
-
-PackFoundry работает с временной копией проекта. Настройки вроде размера окна применяются только к этой копии, исходники выбранного приложения не меняются.
-
-## Рабочие пространства
-
-### Настройки
-
-Диагностика и установка инструментов сборки. Блоки разделены по форматам:
-
-- RPM — host-сборка на Fedora/RHEL-like системах или управляемый Fedora builder для будущей cross-distro сборки.
-- DEB — нативная сборка на Debian/Ubuntu-like системах или управляемый Debian builder на других Linux-дистрибутивах.
-- AppImage — Flutter/Linux toolchain и AppImageTool.
-- TAR.GZ — Flutter/Linux toolchain и системный `tar`.
-- EXE — инструменты для создания Windows build kit zip.
-
-Ниже находится панель установок интерфейса: тема и язык.
-
-### Проект
-
-Выбор Flutter-проекта и настройка будущих пакетов:
-
-- каталог проекта и полезные проверки: `pubspec.yaml`, Linux/Windows runners, версия, описание;
-- размер окна, иконка `.png` или `.svg`;
-- тег релиза, почта разработчика, издатель, сайт проекта, лицензия и описание пакета;
-- выбор форматов установщиков;
-- имя выходного пакета;
-- папка экспорта.
-
-### Сборка
-
-Запуск сборки и наблюдение за процессом:
-
-- кнопка Build;
-- общий прогресс и примерное оставшееся время;
-- интерактивный roadmap этапов;
-- технический лог.
+- Сборка Linux-пакетов: AppImage, `.deb`, `.rpm`, `tar.gz`.
+- Сборка Android APK через Flutter и локальный Android SDK.
+- Windows build kit: переносимый zip с проектом, Inno Setup config и PowerShell-скриптом для сборки `.exe` на Windows.
+- Управляемые container builders для сборки пакетов не под текущий дистрибутив: Debian builder для DEB, Fedora builder для RPM.
+- Быстрый режим host-сборки для формата текущего Linux-дистрибутива.
+- Установка и диагностика инструментов сборки прямо из настроек.
+- Дополнительные зависимости пакетов: `Depends` для DEB и `Requires` для RPM.
+- Интерактивный roadmap сборки: визуальный режим и режим команд.
+- Кнопка запуска проекта без сборки для быстрой проверки.
+- Инспектор готовых пакетов: метаданные, зависимости, иконка и дерево файлов внутри пакета.
+- Редактирование metadata/control и зависимостей DEB-пакета с сохранением измененной копии.
+- Конфигурационный файл `packfoundry.json` для повторяемых сборок.
+- Русская и английская локализация, светлая/темная/системная тема.
 
 ## Поддерживаемые артефакты
 
 | Платформа | Формат | Статус |
 | --- | --- | --- |
 | Linux | AppImage | Работает |
-| Linux | `.deb` | Работает: нативно на DEB-based или через Debian builder |
-| Linux | `.rpm` | Работает на Fedora/RHEL-like host-системах |
+| Linux | `.deb` | Работает нативно на DEB-based системах или через Debian builder |
+| Linux | `.rpm` | Работает нативно на Fedora/RHEL-like системах или через Fedora builder |
 | Linux | `tar.gz` | Работает |
-| Windows | Inno Setup `.exe` | Работает через Windows build kit zip |
-| Android | APK/AAB | Запланировано |
+| Android | APK | Работает |
+| Windows | Inno Setup `.exe` | Работает через Windows build kit |
 | macOS | `.dmg` | Запланировано |
 | iOS | `.ipa` | Запланировано |
 
-## Как работает Linux-сборка
+## Рабочие пространства
 
-PackFoundry создаёт временную копию проекта, применяет build-only настройки и собирает Linux release bundle.
+### Настройки
 
-- AppImage собирается из Linux bundle через `appimagetool`.
-- RPM собирается через `rpmbuild`, spec-файл генерируется автоматически.
-- DEB собирается через `dpkg-deb`; на не-DEB системах используется управляемый Debian builder с Flutter SDK и зависимостями внутри контейнера.
-- `tar.gz` — переносимый архив Linux release bundle.
+Здесь PackFoundry показывает доступность инструментов и builders:
 
-Метаданные из панели проекта попадают в пакеты: версия, maintainer/email, license, homepage, description и publisher там, где формат это поддерживает.
+- RPM: host-инструменты или Fedora builder.
+- DEB: host-инструменты или Debian builder.
+- AppImage: Flutter/Linux toolchain и AppImageTool.
+- TAR.GZ: Flutter/Linux toolchain и `tar`.
+- EXE: создание Windows build kit.
+- APK: Flutter, Android SDK и Java.
 
-## Как работает Windows build kit
+В этой же вкладке находятся настройки интерфейса: тема и язык.
 
-Прямая сборка Windows runner на Linux невозможна без полноценного Windows toolchain. Поэтому PackFoundry делает переносимый zip-набор:
+### Проект
+
+Здесь выбирается Flutter-проект и настраивается будущая сборка:
+
+- папка проекта;
+- импорт/экспорт `packfoundry.json`;
+- размер окна Linux desktop-приложения;
+- иконка `.png` или `.svg`;
+- тег релиза, разработчик, email, сайт, лицензия и описание;
+- имя выходного пакета;
+- папка экспорта;
+- форматы установщиков;
+- дополнительные зависимости для DEB/RPM.
+
+PackFoundry работает с временной копией проекта. Настройки вроде размера окна и иконки применяются к build workspace, исходный проект не переписывается.
+
+### Сборка
+
+Здесь запускается сборка и отображается процесс:
+
+- Build — собрать выбранные пакеты.
+- Run without build — запустить выбранный Flutter-проект для теста.
+- Visual — roadmap блоками с прогрессом.
+- Commands — список команд, которые соответствуют текущему плану сборки.
+- Full/Simplified — подробный или укрупненный roadmap.
+- Технический лог — подробности выполнения и ошибок.
+
+### Пакеты
+
+Инспектор готовых пакетов. Можно выбрать файл `.deb`, `.rpm`, `.AppImage`, `.tar.gz`, `.apk`, `.exe` или `.zip` и посмотреть:
+
+- формат, имя, размер и путь;
+- metadata/control;
+- зависимости;
+- иконку, если она найдена внутри пакета;
+- дерево файлов внутри архива/пакета.
+
+Для DEB доступно редактирование metadata/control и зависимостей с сохранением новой копии `*_edited.deb`. RPM и часть других форматов показываются в режиме просмотра: их корректнее менять через параметры сборки и пересборку.
+
+## Примеры использования
+
+### Пример 1: собрать AppImage и RPM на Fedora
+
+1. Откройте PackFoundry.
+2. Во вкладке «Настройки» убедитесь, что RPM host tools и AppImageTool доступны. Если нет — нажмите установку недостающих инструментов.
+3. Во вкладке «Проект» выберите папку Flutter-проекта.
+4. Укажите тег релиза, например `v1.3.0`, иконку и папку экспорта.
+5. В «Установщиках» отметьте AppImage и RPM.
+6. Нажмите Build во вкладке «Сборка».
+7. В папке экспорта появятся `.AppImage` и `.rpm`.
+
+### Пример 2: собрать DEB на Fedora через builder
+
+1. Во вкладке «Настройки» установите DEB builder.
+2. Во вкладке «Проект» выберите приложение и папку экспорта.
+3. Отметьте `deb package`.
+4. Если нужно, добавьте зависимость в DEB Depends, например:
+
+```text
+libgtk-3-0 | libgtk-3-0t64
+```
+
+5. Нажмите Build.
+6. PackFoundry запустит Debian builder и сохранит `.deb` в папку экспорта.
+
+### Пример 3: собрать Windows EXE через Windows build kit
+
+1. На Linux выберите Flutter-проект и отметьте Windows / Inno Setup exe.
+2. Нажмите Build.
+3. В папке экспорта появится архив:
 
 ```text
 *_windows_build_kit.zip
 ```
 
-Внутри:
-
-- копия Flutter-проекта;
-- `scripts/build_windows.ps1`;
-- `inno/setup.iss`;
-- выбранная иконка;
-- короткая инструкция.
-
-Пользователь переносит zip в Windows 10/11 или Windows VM, распаковывает и запускает:
+4. Скопируйте архив в Windows 10/11 или Windows VM.
+5. Распакуйте его и выполните в PowerShell:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\scripts\build_windows.ps1
 ```
 
-Скрипт сам проверяет и при необходимости устанавливает Git, Flutter SDK, Visual Studio Build Tools и Inno Setup, включает/проверяет Developer Mode, собирает `flutter build windows --release` и создаёт `.exe` установщик в папке `output`.
+Скрипт проверит Flutter SDK, Visual Studio Build Tools, Inno Setup и Developer Mode. Готовый `.exe` появится в папке `output`.
+
+### Пример 4: проверить готовый DEB-пакет
+
+1. Откройте вкладку «Пакеты».
+2. Нажмите «Выбрать пакет» и выберите `.deb`.
+3. Посмотрите metadata, зависимости, иконку и дерево файлов.
+4. При необходимости измените `Depends` или control metadata.
+5. Нажмите «Сохранить измененную копию».
+
+## Конфигурационный файл
+
+PackFoundry умеет импортировать и экспортировать `packfoundry.json`. Это удобно, если вы хотите один раз описать проект, форматы пакетов и metadata, а потом менять только тег релиза.
+
+Особое значение:
+
+```text
+$choose_in_packfoundry
+```
+
+означает, что путь будет выбран пользователем в интерфейсе.
+
+Пример:
+
+```json
+{
+  "schema": "packfoundry.config.v1",
+  "projectPath": "$choose_in_packfoundry",
+  "outputPath": "$choose_in_packfoundry",
+  "iconPath": "assets/icon.png",
+  "appName": "HashChecker",
+  "releaseTag": "v1.3.0",
+  "developerEmail": "dev@example.com",
+  "publisherName": "Example Studio",
+  "homepageUrl": "https://example.com/hashchecker",
+  "license": "GPL-2.0-only",
+  "description": "A desktop tool for checking file hashes.",
+  "window": {
+    "width": 1280,
+    "height": 800
+  },
+  "packageTypes": [
+    "appimage",
+    "deb",
+    "rpm",
+    "tar.gz",
+    "apk",
+    "exe"
+  ],
+  "additionalDependencies": {
+    "deb": "libgtk-3-0 | libgtk-3-0t64",
+    "rpm": "webkit2gtk4.1"
+  }
+}
+```
+
+Поддерживаемые `packageTypes`: `appimage`, `deb`, `rpm`, `tar.gz`, `apk`, `exe`, `dmg`, `ipa`.
+
+`additionalDependencies` добавляет зависимости к стандартному набору PackFoundry:
+
+- `deb` записывается в `Depends`;
+- `rpm` записывается в `Requires`.
+
+## Как работает сборка
+
+PackFoundry создает временную копию проекта, применяет build-only настройки и запускает нужный pipeline:
+
+- AppImage собирается через Linux release bundle и AppImageTool.
+- DEB собирается через `dpkg-deb`; на не-DEB системах используется Debian builder.
+- RPM собирается через `rpmbuild`; на не-RPM системах используется Fedora builder.
+- `tar.gz` упаковывает Linux release bundle.
+- APK собирается через `flutter build apk --release`.
+- Windows EXE собирается через переносимый build kit, который запускается на Windows.
+
+Builders кэшируются и переиспользуются, поэтому первая установка может быть долгой, а последующие сборки идут заметно быстрее.
 
 ## Разработка
 
@@ -137,11 +229,11 @@ flutter run -d linux
 ```text
 lib/
   core/
-    models/       # модели и состояние сборки
-    services/     # сервисы сборки, упаковки и диагностики инструментов
+    models/       # модели сборки, конфигов, инструментов и инспектора пакетов
+    services/     # сборка, builders, toolchain, config, package inspector
   l10n/           # локализация
   ui/
-    pages/        # страницы приложения
+    pages/        # основные страницы приложения
     widgets/      # UI-компоненты
 ```
 
