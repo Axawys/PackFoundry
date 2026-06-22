@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -5,7 +7,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:pack_foundry/core/models/build_log_entry.dart';
 import 'package:pack_foundry/core/models/build_target.dart';
+import 'package:pack_foundry/core/models/build_configuration.dart';
+import 'package:pack_foundry/core/models/project_config.dart';
 import 'package:pack_foundry/core/services/build_service.dart';
+import 'package:pack_foundry/core/services/project_config_service.dart';
 import 'package:pack_foundry/l10n/app_localizations.dart';
 import 'package:pack_foundry/main.dart';
 import 'package:pack_foundry/ui/widgets/build_panel.dart';
@@ -90,6 +95,40 @@ void main() {
     );
   });
 
+  test('saves and loads PackFoundry project config', () async {
+    final tempDir = await Directory.systemTemp.createTemp(
+      'pack_foundry_config_test_',
+    );
+    addTearDown(() => tempDir.delete(recursive: true));
+
+    final service = ProjectConfigService();
+    final configPath = '${tempDir.path}/packfoundry.json';
+    final config = ProjectConfig(
+      projectPath: '.',
+      outputPath: ProjectConfig.chooseInPackFoundry,
+      iconPath: 'assets/icon.png',
+      appName: 'HashChecker',
+      releaseTag: 'v2.1.1',
+      developerEmail: 'dev@example.com',
+      publisherName: 'Example Studio',
+      homepageUrl: 'https://example.com',
+      license: 'GPL-2.0-only',
+      description: 'Checks file hashes.',
+      windowWidth: 1280,
+      windowHeight: 800,
+      packageTypes: const ['appimage', 'deb', 'rpm'],
+    );
+
+    await service.save(configPath, config);
+    final loaded = await service.load(configPath);
+
+    expect(loaded.projectPath, '${tempDir.path}/.');
+    expect(loaded.choosesOutput, isTrue);
+    expect(loaded.iconPath, '${tempDir.path}/assets/icon.png');
+    expect(loaded.releaseTag, 'v2.1.1');
+    expect(loaded.packageTypes, ['appimage', 'deb', 'rpm']);
+  });
+
   testWidgets('shows roadmap before starting the selected build', (
     tester,
   ) async {
@@ -107,10 +146,100 @@ void main() {
     await tester.tap(find.text('Build'));
     await tester.pump();
 
+    expect(find.text('Full'), findsOneWidget);
+    expect(find.text('Simplified'), findsOneWidget);
+    expect(find.text('Create AppDir'), findsOneWidget);
+    expect(find.text('Create AppRun'), findsOneWidget);
+    expect(find.text('Resolve dependencies'), findsOneWidget);
+    expect(find.text('Locate bundle'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+
+    await tester.ensureVisible(find.text('Simplified'));
+    await tester.tap(find.text('Simplified'));
+    await tester.pump();
+
+    expect(find.text('Create AppDir'), findsNothing);
+    expect(find.text('Create AppRun'), findsNothing);
     expect(find.text('APPIMAGE'), findsOneWidget);
     expect(find.text('Flutter build'), findsOneWidget);
-    expect(find.text('Linux bundle'), findsOneWidget);
-    expect(find.byType(LinearProgressIndicator), findsNothing);
+
+    await tester.ensureVisible(find.text('Commands'));
+    await tester.tap(find.text('Commands'));
+    await tester.pump();
+
+    expect(
+      find.text(
+        'Select a Flutter project so PackFoundry can resolve real paths and names.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('shows executable commands with resolved build values', (
+    tester,
+  ) async {
+    final target = BuildTarget(
+      platform: 'Linux',
+      artifact: 'AppImage',
+      status: TargetStatus.ready,
+      selected: true,
+    );
+    final steps = BuildService().createRoadmapPlan([target]);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: const [
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: BuildPanel(
+              selectedTargets: 1,
+              isBuilding: false,
+              progress: 0,
+              roadmapSteps: steps,
+              log: const [],
+              configuration: BuildConfiguration(
+                appName: 'Hash Checker',
+                releaseTag: 'v2.1.1',
+                developerEmail: 'dev@example.com',
+                publisherName: 'Example Studio',
+                homepageUrl: 'https://example.com',
+                license: 'GPL-2.0-only',
+                description: 'Checks file hashes.',
+                projectPath: '/home/user/Hash Checker',
+                outputPath: '/home/user/Packages',
+                iconPath: '/home/user/hashchecker.png',
+                windowWidth: 1280,
+                windowHeight: 800,
+                targets: [target],
+              ),
+              onBuild: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Commands'));
+    await tester.pump();
+
+    expect(find.text("PROJECT='/home/user/Hash Checker'"), findsOneWidget);
+    expect(find.text("EXPORT='/home/user/Packages'"), findsOneWidget);
+    expect(find.text("APP_NAME='Hash Checker'"), findsOneWidget);
+    expect(find.text("VERSION='2.1.1'"), findsOneWidget);
+    expect(find.text('flutter build linux --release'), findsOneWidget);
+    expect(find.textContaining('<project>'), findsNothing);
+    expect(find.textContaining('<app>'), findsNothing);
+    final commands = tester
+        .widgetList<SelectableText>(find.byType(SelectableText))
+        .map((widget) => widget.data ?? '')
+        .toList();
+    expect(commands.any((command) => command.contains(r'\"')), isFalse);
   });
 
   testWidgets('remembers release metadata fields', (tester) async {
@@ -266,15 +395,18 @@ void main() {
       ),
     );
 
-    expect(find.text('Очистка'), findsOneWidget);
+    expect(find.text('Подготовка очистки'), findsOneWidget);
+    expect(find.text('Удаление workspace'), findsOneWidget);
+    expect(find.text('Визуально'), findsOneWidget);
+    expect(find.text('Команды'), findsOneWidget);
+    expect(find.text('Полное'), findsOneWidget);
+    expect(find.text('Упрощенное'), findsOneWidget);
     expect(
-      find.text(
-        'Удаление временных рабочих папок. Тяжёлые кеши builder остаются отдельно.',
-      ),
+      find.text('Возвращаем владельца файлов после контейнерной сборки.'),
       findsOneWidget,
     );
     expect(find.text('Временные файлы удалены.'), findsOneWidget);
-    expect(find.text('Обычно: ~3 мин'), findsWidgets);
+    expect(find.text('Обычно: ~2 мин'), findsWidgets);
   });
 
   testWidgets('shows estimated remaining build time', (tester) async {
@@ -388,7 +520,7 @@ void main() {
 
     expect(find.text('What happens'), findsOneWidget);
     expect(
-      find.textContaining('The host runs flutter build linux --release'),
+      find.textContaining('PackFoundry tracks this technical action'),
       findsOneWidget,
     );
 
@@ -419,12 +551,8 @@ void main() {
 
     expect(find.text('What happens'), findsOneWidget);
     expect(
-      find.textContaining('temporary project copy and packaging intermediates'),
+      find.textContaining('PackFoundry tracks this technical action'),
       findsOneWidget,
-    );
-    expect(
-      find.textContaining('The host runs flutter build linux --release'),
-      findsNothing,
     );
   });
 
@@ -475,28 +603,24 @@ void main() {
 
     expect(find.text('What happens'), findsOneWidget);
     expect(
-      find.textContaining('temporary project copy and packaging intermediates'),
+      find.textContaining('PackFoundry tracks this technical action'),
       findsOneWidget,
     );
 
-    await tester.tap(find.text('Cleanup'));
+    await tester.tap(find.text('Prepare cleanup'));
     await tester.pumpAndSettle();
     expect(find.text('What happens'), findsNothing);
 
-    await tester.ensureVisible(find.text('RPM'));
-    await tester.tap(find.text('RPM'));
+    await tester.ensureVisible(find.text('RPM tree'));
+    await tester.tap(find.text('RPM tree'));
     await tester.pumpAndSettle();
     expect(find.text('What happens'), findsOneWidget);
     expect(
-      find.textContaining('rpmbuild tree, desktop file, icon, and spec file'),
+      find.textContaining('Create the rpmbuild directory structure'),
       findsOneWidget,
     );
-    expect(
-      find.textContaining('temporary project copy and packaging intermediates'),
-      findsNothing,
-    );
 
-    await tester.tap(find.text('RPM'));
+    await tester.tap(find.text('RPM tree'));
     await tester.pumpAndSettle();
     expect(find.text('What happens'), findsNothing);
   });

@@ -10,12 +10,16 @@ class ProjectPanel extends StatelessWidget {
     required this.projectPath,
     required this.checks,
     required this.onChooseProject,
+    required this.onImportConfig,
+    required this.onExportConfig,
     super.key,
   });
 
   final String? projectPath;
   final List<ProjectCheck> checks;
   final VoidCallback onChooseProject;
+  final VoidCallback onImportConfig;
+  final VoidCallback onExportConfig;
 
   @override
   Widget build(BuildContext context) {
@@ -27,20 +31,33 @@ class ProjectPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Expanded(
+              FilledButton.icon(
+                onPressed: onChooseProject,
+                icon: const Icon(Icons.folder_outlined),
+                label: Text(l10n.chooseFolder),
+              ),
+              OutlinedButton.icon(
+                onPressed: onImportConfig,
+                icon: const Icon(Icons.file_open_outlined),
+                label: Text(l10n.importConfig),
+              ),
+              OutlinedButton.icon(
+                onPressed: onExportConfig,
+                icon: const Icon(Icons.save_alt_outlined),
+                label: Text(l10n.exportConfig),
+              ),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
                 child: Text(
                   projectPath ?? l10n.noProjectSelected,
                   style: Theme.of(context).textTheme.titleMedium,
                   overflow: TextOverflow.ellipsis,
                 ),
-              ),
-              const SizedBox(width: 12),
-              FilledButton.icon(
-                onPressed: onChooseProject,
-                icon: const Icon(Icons.folder_outlined),
-                label: Text(l10n.chooseFolder),
               ),
             ],
           ),

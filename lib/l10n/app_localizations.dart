@@ -67,6 +67,10 @@ class AppLocalizations {
   String get chooseFolder => _isRu ? 'Выбрать папку' : 'Choose folder';
   String get chooseProject => _isRu ? 'Выбрать проект' : 'Choose project';
   String get chooseOutput => _isRu ? 'Выбрать папку экспорта' : 'Choose output';
+  String get importConfig => _isRu ? 'Импорт конфига' : 'Import config';
+  String get exportConfig => _isRu ? 'Экспорт конфига' : 'Export config';
+  String get configFileType =>
+      _isRu ? 'PackFoundry config' : 'PackFoundry config';
   String get iconTypeGroup => _isRu ? 'Иконки приложения' : 'Application icons';
   String get chooseIcon => _isRu ? 'Выбрать иконку' : 'Choose icon';
   String get pubspecFound =>
@@ -86,6 +90,23 @@ class AppLocalizations {
       _isRu ? 'Описание найдено' : 'Description found';
   String get projectDescriptionMissing =>
       _isRu ? 'Описание не указано' : 'Description missing';
+  String get configImported => _isRu
+      ? 'Конфиг PackFoundry применён.'
+      : 'PackFoundry config was applied.';
+  String get configExported =>
+      _isRu ? 'Конфиг PackFoundry сохранён.' : 'PackFoundry config was saved.';
+
+  String configImportFailed(String detail) {
+    return _isRu
+        ? 'Не удалось импортировать конфиг: $detail'
+        : 'Could not import config: $detail';
+  }
+
+  String configExportFailed(String detail) {
+    return _isRu
+        ? 'Не удалось экспортировать конфиг: $detail'
+        : 'Could not export config: $detail';
+  }
 
   String get applicationSettings =>
       _isRu ? 'Настройки приложения' : 'Application settings';
@@ -294,6 +315,16 @@ class AppLocalizations {
   String get building => _isRu ? 'Сборка...' : 'Building...';
   String get buildInstallers =>
       _isRu ? 'Собрать установщики' : 'Build installers';
+  String get visualBuildMode => _isRu ? 'Визуально' : 'Visual';
+  String get commandsBuildMode => _isRu ? 'Команды' : 'Commands';
+  String get fullRoadmapMode => _isRu ? 'Полное' : 'Full';
+  String get simplifiedRoadmapMode => _isRu ? 'Упрощенное' : 'Simplified';
+  String get noBuildCommands => _isRu
+      ? 'Выберите форматы установщиков, чтобы увидеть команды сборки.'
+      : 'Select installer formats to preview build commands.';
+  String get selectProjectForCommands => _isRu
+      ? 'Выберите Flutter-проект, чтобы PackFoundry подставил реальные пути и имена.'
+      : 'Select a Flutter project so PackFoundry can resolve real paths and names.';
   String get technicalLog => _isRu ? 'Технический лог' : 'Technical log';
   String get roadmapRunning => _isRu ? 'Выполняется' : 'Running';
   String overallProgressLabel(int progress) {
@@ -371,6 +402,12 @@ class AppLocalizations {
   }
 
   String roadmapStepTitle(String id, String fallback) {
+    if (_isRu) {
+      final title = _russianVisualRoadmapTitles[id];
+      if (title != null) {
+        return title;
+      }
+    }
     return switch (id) {
       'project' => _isRu ? 'Проект' : 'Project',
       'workspace' => _isRu ? 'Workspace' : 'Workspace',
@@ -390,6 +427,12 @@ class AppLocalizations {
   }
 
   String roadmapStepDescription(String id, String fallback) {
+    if (_isRu) {
+      final description = _russianVisualRoadmapDescriptions[id];
+      if (description != null) {
+        return description;
+      }
+    }
     return switch (id) {
       'project' =>
         _isRu
@@ -524,6 +567,9 @@ class AppLocalizations {
   }
 
   String get roadmapDetailsTitle => _isRu ? 'Что происходит' : 'What happens';
+  String get visualSubstepExpandedDetail => _isRu
+      ? 'PackFoundry отслеживает выполнение этого технического действия и автоматически обновляет его статус, прогресс и диагностические сообщения.'
+      : 'PackFoundry tracks this technical action and automatically updates its status, progress, and diagnostic messages.';
   String get roadmapExpandHint => _isRu ? 'Развернуть этап' : 'Expand step';
   String get roadmapCollapseHint => _isRu ? 'Свернуть этап' : 'Collapse step';
 
@@ -617,6 +663,103 @@ class AppLocalizations {
     return '$platform $translatedArtifact';
   }
 }
+
+const _russianVisualRoadmapTitles = <String, String>{
+  'project:validate': 'Проверка проекта',
+  'project:metadata': 'Чтение метаданных',
+  'project:export': 'Подготовка экспорта',
+  'workspace:create': 'Создание workspace',
+  'workspace:copy': 'Копирование исходников',
+  'workspace:overrides': 'Применение настроек',
+  'local-build:dependencies': 'Зависимости Flutter',
+  'local-build:compile': 'Компиляция Flutter',
+  'local-build:native': 'Нативный runner',
+  'bundle:locate': 'Поиск bundle',
+  'bundle:executable': 'Исполняемый файл',
+  'bundle:icon': 'Иконка окна',
+  'rpm:tree': 'Структура RPM',
+  'rpm:metadata': 'Метаданные RPM',
+  'rpm:spec': 'Spec-файл RPM',
+  'rpm:build': 'Запуск rpmbuild',
+  'rpm:export': 'Экспорт RPM',
+  'appimage:appdir': 'Структура AppDir',
+  'appimage:apprun': 'Создание AppRun',
+  'appimage:desktop': 'Интеграция с desktop',
+  'appimage:package': 'Запуск appimagetool',
+  'appimage:export': 'Экспорт AppImage',
+  'targz:archive': 'Создание архива',
+  'targz:verify': 'Проверка архива',
+  'deb-container:runtime': 'Docker или Podman',
+  'deb-container:image': 'Образ DEB builder',
+  'deb-container:start': 'Запуск builder',
+  'deb-build:dependencies': 'Зависимости в Debian',
+  'deb-build:compile': 'Компиляция в Debian',
+  'deb-build:bundle': 'Поиск DEB bundle',
+  'deb-package:layout': 'Структура Debian-пакета',
+  'deb-package:control': 'Файл DEBIAN/control',
+  'deb-package:desktop': 'Интеграция DEB',
+  'deb-package:build': 'Запуск dpkg-deb',
+  'deb-package:export': 'Экспорт DEB',
+  'windows-kit:layout': 'Структура Windows kit',
+  'windows-kit:project': 'Копирование проекта Windows',
+  'windows-kit:scripts': 'Скрипты Windows',
+  'windows-kit:archive': 'Архив Windows kit',
+  'summary:verify': 'Проверка артефактов',
+  'summary:report': 'Итоги сборки',
+  'cleanup:ownership': 'Подготовка очистки',
+  'cleanup:remove': 'Удаление workspace',
+};
+
+const _russianVisualRoadmapDescriptions = <String, String>{
+  'project:validate':
+      'Проверяем наличие pubspec.yaml и структуру Flutter-проекта.',
+  'project:metadata': 'Читаем название, версию и параметры будущих пакетов.',
+  'project:export': 'Проверяем и создаём выбранную папку экспорта.',
+  'workspace:create': 'Создаём изолированный временный каталог сборки.',
+  'workspace:copy': 'Копируем исходники без старых build-кешей и .git.',
+  'workspace:overrides':
+      'Применяем размер окна, иконку и application-id только к копии.',
+  'local-build:dependencies': 'Получаем зависимости проекта через Flutter pub.',
+  'local-build:compile':
+      'Компилируем Dart-код и Flutter assets в release-режиме.',
+  'local-build:native': 'Собираем плагины и нативный Linux runner.',
+  'bundle:locate': 'Находим созданный каталог release/bundle.',
+  'bundle:executable': 'Определяем основной исполняемый файл приложения.',
+  'bundle:icon': 'Добавляем выбранную иконку окна внутрь bundle.',
+  'rpm:tree': 'Создаём каталоги SPECS, RPMS и staging-файлы.',
+  'rpm:metadata': 'Записываем desktop-файл и системную иконку.',
+  'rpm:spec': 'Формируем правила установки, зависимости и список файлов.',
+  'rpm:build': 'Передаём spec-файл rpmbuild и собираем бинарный RPM.',
+  'rpm:export': 'Копируем готовый RPM в папку экспорта.',
+  'appimage:appdir': 'Создаём переносимую файловую структуру AppDir.',
+  'appimage:apprun':
+      'Записываем launcher, который находит и запускает приложение.',
+  'appimage:desktop': 'Добавляем desktop-файл, application-id и иконку.',
+  'appimage:package': 'Упаковываем AppDir в один файл через appimagetool.',
+  'appimage:export': 'Выставляем право запуска и проверяем итоговый AppImage.',
+  'targz:archive': 'Сжимаем Linux release bundle командами tar и gzip.',
+  'targz:verify': 'Проверяем наличие созданного tar.gz в экспорте.',
+  'deb-container:runtime': 'Определяем доступный контейнерный runtime.',
+  'deb-container:image': 'Проверяем кешированный Debian builder с Flutter SDK.',
+  'deb-container:start': 'Подключаем проект, экспорт и постоянный pub-cache.',
+  'deb-build:dependencies': 'Запускаем flutter pub get внутри Debian builder.',
+  'deb-build:compile': 'Собираем Linux release bundle в окружении Debian.',
+  'deb-build:bundle': 'Находим bundle и исполняемый файл внутри контейнера.',
+  'deb-package:layout': 'Создаём DEBIAN, /opt и каталоги desktop-интеграции.',
+  'deb-package:control':
+      'Записываем версию, зависимости, описание и maintainer.',
+  'deb-package:desktop': 'Устанавливаем desktop-файл и иконку приложения.',
+  'deb-package:build': 'Собираем пакет командой dpkg-deb --build.',
+  'deb-package:export': 'Переносим готовый DEB из контейнера в экспорт.',
+  'windows-kit:layout': 'Создаём каталоги project, scripts, inno и assets.',
+  'windows-kit:project': 'Копируем подготовленный Flutter-проект в набор.',
+  'windows-kit:scripts': 'Генерируем PowerShell и конфигурацию Inno Setup.',
+  'windows-kit:archive': 'Упаковываем переносимый Windows build kit в zip.',
+  'summary:verify': 'Проверяем созданные файлы для всех выбранных целей.',
+  'summary:report': 'Показываем пути к успешным пакетам и итог сборки.',
+  'cleanup:ownership': 'Возвращаем владельца файлов после контейнерной сборки.',
+  'cleanup:remove': 'Удаляем временную копию проекта и staging-файлы.',
+};
 
 extension AppLocalizationsX on BuildContext {
   AppLocalizations get l10n => AppLocalizations.of(this);

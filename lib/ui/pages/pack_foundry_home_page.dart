@@ -9,10 +9,12 @@ import '../../core/models/build_log_entry.dart';
 import '../../core/models/build_target.dart';
 import '../../core/models/chip_tone.dart';
 import '../../core/models/builder_environment.dart';
+import '../../core/models/project_config.dart';
 import '../../core/models/tool_status.dart';
 import '../../core/services/app_preferences.dart';
 import '../../core/services/build_service.dart';
 import '../../core/services/builder_environment_service.dart';
+import '../../core/services/project_config_service.dart';
 import '../../core/services/toolchain_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../widgets/app_settings_panel.dart';
@@ -53,6 +55,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   final _buildService = BuildService();
   final _toolchainService = ToolchainService();
   final _builderService = BuilderEnvironmentService();
+  final _projectConfigService = const ProjectConfigService();
   final _appPreferences = AppPreferences();
   final _appNameController = TextEditingController(text: _defaultAppName);
   final _releaseTagController = TextEditingController();
@@ -1087,6 +1090,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       return;
     }
 
+    _setProjectPath(path);
+  }
+
+  void _setProjectPath(String path) {
     final windowSize = _readFlutterWindowSize(path);
     final projectMetadata = _readProjectMetadata(path);
     final projectAppName = projectMetadata.name;
@@ -1116,6 +1123,148 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
         _homepageUrlController.text = projectMetadata.homepage!;
       }
     });
+  }
+
+  Future<void> _importProjectConfig() async {
+    if (_isBuilding) {
+      return;
+    }
+
+    final file = await openFile(
+      acceptedTypeGroups: [
+        XTypeGroup(label: context.l10n.configFileType, extensions: ['json']),
+      ],
+      confirmButtonText: context.l10n.importConfig,
+    );
+    if (file == null || !mounted) {
+      return;
+    }
+
+    try {
+      final config = await _projectConfigService.load(file.path);
+      if (!mounted) {
+        return;
+      }
+      _applyProjectConfig(config);
+      _showSnackBar(context.l10n.configImported);
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(context.l10n.configImportFailed(error.toString()));
+    }
+  }
+
+  Future<void> _exportProjectConfig() async {
+    if (_isBuilding) {
+      return;
+    }
+
+    final location = await getSaveLocation(
+      acceptedTypeGroups: [
+        XTypeGroup(label: context.l10n.configFileType, extensions: ['json']),
+      ],
+      initialDirectory: _projectPath,
+      suggestedName: 'packfoundry.json',
+      confirmButtonText: context.l10n.exportConfig,
+      canCreateDirectories: true,
+    );
+    if (location == null || !mounted) {
+      return;
+    }
+
+    try {
+      await _projectConfigService.save(location.path, _currentProjectConfig());
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(context.l10n.configExported);
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar(context.l10n.configExportFailed(error.toString()));
+    }
+  }
+
+  ProjectConfig _currentProjectConfig() {
+    return ProjectConfig(
+      projectPath: _projectPath ?? ProjectConfig.chooseInPackFoundry,
+      outputPath: _outputPath ?? ProjectConfig.chooseInPackFoundry,
+      iconPath: _iconPath ?? ProjectConfig.chooseInPackFoundry,
+      appName: _appNameController.text,
+      releaseTag: _releaseTagController.text,
+      developerEmail: _developerEmailController.text,
+      publisherName: _publisherNameController.text,
+      homepageUrl: _homepageUrlController.text,
+      license: _licenseController.text,
+      description: _descriptionController.text,
+      windowWidth: int.tryParse(_widthController.text),
+      windowHeight: int.tryParse(_heightController.text),
+      packageTypes: [
+        for (final target in _targets)
+          if (target.selected)
+            ProjectConfig.packageTypeForTarget(
+              target.platform,
+              target.artifact,
+            ),
+      ],
+    );
+  }
+
+  void _applyProjectConfig(ProjectConfig config) {
+    final projectPath = config.projectPath;
+    if (!config.choosesProject && projectPath != null) {
+      _setProjectPath(projectPath);
+    }
+
+    setState(() {
+      _restoreConfigText(_appNameController, config.appName);
+      _restoreConfigText(_releaseTagController, config.releaseTag);
+      _restoreConfigText(_developerEmailController, config.developerEmail);
+      _restoreConfigText(_publisherNameController, config.publisherName);
+      _restoreConfigText(_homepageUrlController, config.homepageUrl);
+      _restoreConfigText(_licenseController, config.license);
+      _restoreConfigText(_descriptionController, config.description);
+      if (config.windowWidth != null) {
+        _widthController.text = config.windowWidth.toString();
+      }
+      if (config.windowHeight != null) {
+        _heightController.text = config.windowHeight.toString();
+      }
+      if (!config.choosesOutput) {
+        _outputPath = config.outputPath;
+      }
+      if (!config.choosesIcon) {
+        _iconPath = config.iconPath;
+      }
+      if (config.packageTypes.isNotEmpty) {
+        for (final target in _targets) {
+          target.selected =
+              target.canSelect &&
+              config.packageTypes.any(
+                (type) => ProjectConfig.targetMatchesPackageType(
+                  type,
+                  target.platform,
+                  target.artifact,
+                ),
+              );
+        }
+      }
+      _replaceRoadmapWithPreview();
+    });
+  }
+
+  void _restoreConfigText(TextEditingController controller, String? value) {
+    if (value != null) {
+      controller.text = value;
+    }
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   bool get _shouldAutofillAppName {
@@ -1364,6 +1513,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
               onRemoveTools: _removeTools,
               onCancelInstall: _cancelToolInstall,
               onChooseProject: _chooseProjectFolder,
+              onImportConfig: _importProjectConfig,
+              onExportConfig: _exportProjectConfig,
               onChooseIcon: _chooseIconFile,
               onChooseOutput: _chooseOutputFolder,
               onTargetChanged: _setTargetSelection,
@@ -1502,6 +1653,8 @@ class _WorkspaceContent extends StatelessWidget {
     required this.onRemoveTools,
     required this.onCancelInstall,
     required this.onChooseProject,
+    required this.onImportConfig,
+    required this.onExportConfig,
     required this.onChooseIcon,
     required this.onChooseOutput,
     required this.onTargetChanged,
@@ -1538,6 +1691,8 @@ class _WorkspaceContent extends StatelessWidget {
   final ValueChanged<ToolchainInstallTarget> onRemoveTools;
   final VoidCallback onCancelInstall;
   final VoidCallback onChooseProject;
+  final VoidCallback onImportConfig;
+  final VoidCallback onExportConfig;
   final VoidCallback onChooseIcon;
   final VoidCallback onChooseOutput;
   final void Function(BuildTarget target, bool selected) onTargetChanged;
@@ -1567,6 +1722,8 @@ class _WorkspaceContent extends StatelessWidget {
           projectPath: projectPath,
           checks: projectChecks,
           onChooseProject: onChooseProject,
+          onImportConfig: onImportConfig,
+          onExportConfig: onExportConfig,
         ),
         const SizedBox(height: 16),
         AppSettingsPanel(
@@ -1597,6 +1754,23 @@ class _WorkspaceContent extends StatelessWidget {
           progress: progress,
           roadmapSteps: roadmapSteps,
           log: log,
+          configuration: projectPath == null
+              ? null
+              : BuildConfiguration(
+                  appName: appNameController.text,
+                  releaseTag: releaseTagController.text,
+                  developerEmail: developerEmailController.text,
+                  publisherName: publisherNameController.text,
+                  homepageUrl: homepageUrlController.text,
+                  license: licenseController.text,
+                  description: descriptionController.text,
+                  projectPath: projectPath!,
+                  outputPath: outputPath,
+                  iconPath: iconPath,
+                  windowWidth: int.tryParse(widthController.text),
+                  windowHeight: int.tryParse(heightController.text),
+                  targets: targets,
+                ),
           onBuild: onBuild,
         ),
       ],
