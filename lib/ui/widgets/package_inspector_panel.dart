@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../../core/models/package_inspection.dart';
@@ -52,28 +54,41 @@ class PackageInspectorPanel extends StatelessWidget {
             )
           else if (inspection != null) ...[
             Wrap(
-              spacing: 10,
-              runSpacing: 10,
+              spacing: 14,
+              runSpacing: 12,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                _DataChip(label: l10n.packageFormat, value: inspection.format),
-                _DataChip(
-                  label: l10n.packageFileName,
-                  value: inspection.fileName,
-                ),
-                _DataChip(
-                  label: l10n.packageSize,
-                  value: _formatBytes(inspection.sizeBytes),
-                ),
-                _DataChip(
-                  label: l10n.packageEditMode,
-                  value: inspection.saveSupported
-                      ? l10n.packageEditable
-                      : l10n.packageReadonly,
+                _PackageIconPreview(path: inspection.iconPath),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    _DataChip(
+                      label: l10n.packageFormat,
+                      value: inspection.format,
+                    ),
+                    _DataChip(
+                      label: l10n.packageFileName,
+                      value: inspection.fileName,
+                    ),
+                    _DataChip(
+                      label: l10n.packageSize,
+                      value: _formatBytes(inspection.sizeBytes),
+                    ),
+                    _DataChip(
+                      label: l10n.packageEditMode,
+                      value: inspection.saveSupported
+                          ? l10n.packageEditable
+                          : l10n.packageReadonly,
+                    ),
+                  ],
                 ),
               ],
             ),
             const SizedBox(height: 12),
             _PathBox(label: l10n.packagePath, value: inspection.path),
+            const SizedBox(height: 12),
+            _FileTreeView(nodes: inspection.fileTree),
             if (inspection.note != null) ...[
               const SizedBox(height: 12),
               _NoteBox(text: inspection.note!),
@@ -128,6 +143,173 @@ class PackageInspectorPanel extends StatelessWidget {
       return '${mib.toStringAsFixed(1)} MiB';
     }
     return '${(mib / 1024).toStringAsFixed(1)} GiB';
+  }
+}
+
+class _FileTreeView extends StatelessWidget {
+  const _FileTreeView({required this.nodes});
+
+  final List<PackageFileNode> nodes;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final colorScheme = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 820),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+          childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
+          title: Text(l10n.packageFileTree),
+          subtitle: Text(
+            nodes.isEmpty
+                ? l10n.packageFileTreeUnavailable
+                : l10n.packageFileTreeCount(nodes.length),
+          ),
+          initiallyExpanded: nodes.isNotEmpty,
+          children: nodes.isEmpty
+              ? const []
+              : [
+                  for (final node in nodes)
+                    _FileTreeNodeTile(node: node, depth: 0),
+                ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FileTreeNodeTile extends StatelessWidget {
+  const _FileTreeNodeTile({required this.node, required this.depth});
+
+  final PackageFileNode node;
+  final int depth;
+
+  @override
+  Widget build(BuildContext context) {
+    if (node.isDirectory) {
+      return Padding(
+        padding: EdgeInsets.only(left: depth * 12),
+        child: ExpansionTile(
+          dense: true,
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.folder_outlined, size: 18),
+          title: Text(node.name, overflow: TextOverflow.ellipsis),
+          subtitle: node.children.isEmpty
+              ? null
+              : Text(context.l10n.packageFileTreeCount(node.children.length)),
+          children: [
+            for (final child in node.children)
+              _FileTreeNodeTile(node: child, depth: depth + 1),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: EdgeInsets.only(left: 12.0 + depth * 12),
+      child: ListTile(
+        dense: true,
+        minLeadingWidth: 20,
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.insert_drive_file_outlined, size: 17),
+        title: Text(node.name, overflow: TextOverflow.ellipsis),
+        subtitle: Text(node.path, overflow: TextOverflow.ellipsis),
+        trailing: node.sizeBytes == null
+            ? null
+            : Text(_formatNodeBytes(node.sizeBytes!)),
+      ),
+    );
+  }
+
+  String _formatNodeBytes(int bytes) {
+    if (bytes < 1024) {
+      return '$bytes B';
+    }
+    final kib = bytes / 1024;
+    if (kib < 1024) {
+      return '${kib.toStringAsFixed(1)} KiB';
+    }
+    return '${(kib / 1024).toStringAsFixed(1)} MiB';
+  }
+}
+
+class _PackageIconPreview extends StatelessWidget {
+  const _PackageIconPreview({required this.path});
+
+  final String? path;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: 82,
+      height: 82,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: _content(context),
+        ),
+      ),
+    );
+  }
+
+  Widget _content(BuildContext context) {
+    final iconPath = path;
+    if (iconPath == null || iconPath.trim().isEmpty) {
+      return Icon(
+        Icons.inventory_2_outlined,
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+      );
+    }
+
+    final file = File(iconPath);
+    if (!file.existsSync()) {
+      return Icon(
+        Icons.broken_image_outlined,
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+      );
+    }
+
+    if (iconPath.toLowerCase().endsWith('.svg')) {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.image_outlined,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'SVG',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Image.file(
+      file,
+      fit: BoxFit.contain,
+      errorBuilder: (context, error, stackTrace) => Icon(
+        Icons.broken_image_outlined,
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
+    );
   }
 }
 

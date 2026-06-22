@@ -329,6 +329,17 @@ class AppLocalizations {
   String get packageFileName => _isRu ? 'Файл' : 'File';
   String get packageSize => _isRu ? 'Размер' : 'Size';
   String get packagePath => _isRu ? 'Путь' : 'Path';
+  String get packageFileTree => _isRu ? 'Дерево файлов' : 'File tree';
+  String get packageFileTreeUnavailable => _isRu
+      ? 'Не удалось распаковать пакет или получить список файлов.'
+      : 'Could not extract the package or read its file list.';
+  String packageFileTreeCount(int count) {
+    if (!_isRu) {
+      return '$count item${count == 1 ? '' : 's'}';
+    }
+    return 'Элементов: $count';
+  }
+
   String get packageEditMode => _isRu ? 'Редактирование' : 'Editing';
   String get packageEditable => _isRu ? 'Доступно' : 'Available';
   String get packageReadonly => _isRu ? 'Только просмотр' : 'Read only';

@@ -5,6 +5,9 @@ import '../models/package_inspection.dart';
 class PackageInspectorService {
   const PackageInspectorService();
 
+  static const _maxFileTreeDepth = 5;
+  static const _maxFileTreeNodes = 700;
+
   Future<PackageInspection> inspect(String path) async {
     final file = File(path);
     final stat = await file.stat();
@@ -120,6 +123,13 @@ class PackageInspectorService {
     String fileName,
     int sizeBytes,
   ) async {
+    final extractedDirectory = await _extractDeb(path);
+    final iconPath = extractedDirectory == null
+        ? null
+        : _findPackageIcon(extractedDirectory);
+    final fileTree = extractedDirectory == null
+        ? const <PackageFileNode>[]
+        : _buildFileTree(extractedDirectory);
     final result = await Process.run('dpkg-deb', ['-f', path]);
     if (result.exitCode != 0) {
       return _basicInspection(
@@ -127,6 +137,8 @@ class PackageInspectorService {
         fileName: fileName,
         format: 'DEB',
         sizeBytes: sizeBytes,
+        fileTree: fileTree,
+        iconPath: iconPath,
         note:
             'dpkg-deb could not read package metadata: ${_processOutput(result)}',
       );
@@ -143,6 +155,8 @@ class PackageInspectorService {
       dependencies: dependencies,
       editable: true,
       saveSupported: true,
+      fileTree: fileTree,
+      iconPath: iconPath,
       note: 'DEB dependencies can be edited and saved into a new package copy.',
     );
   }
@@ -152,6 +166,13 @@ class PackageInspectorService {
     String fileName,
     int sizeBytes,
   ) async {
+    final extractedDirectory = await _extractRpm(path);
+    final iconPath = extractedDirectory == null
+        ? null
+        : _findPackageIcon(extractedDirectory);
+    final fileTree = extractedDirectory == null
+        ? const <PackageFileNode>[]
+        : _buildFileTree(extractedDirectory);
     final info = await Process.run('rpm', ['-qpi', path]);
     final requires = await Process.run('rpm', ['-qpR', path]);
     if (info.exitCode != 0) {
@@ -160,6 +181,8 @@ class PackageInspectorService {
         fileName: fileName,
         format: 'RPM',
         sizeBytes: sizeBytes,
+        fileTree: fileTree,
+        iconPath: iconPath,
         note: 'rpm could not read package metadata: ${_processOutput(info)}',
       );
     }
@@ -175,6 +198,8 @@ class PackageInspectorService {
           : const [],
       editable: false,
       saveSupported: false,
+      fileTree: fileTree,
+      iconPath: iconPath,
       note:
           'RPM dependencies are stored in signed package metadata. Edit Requires in the build recipe and rebuild the RPM.',
     );
@@ -187,6 +212,13 @@ class PackageInspectorService {
     String format,
   ) async {
     final lowerFormat = format.toLowerCase();
+    final extractedDirectory = await _extractArchive(path, lowerFormat);
+    final iconPath = extractedDirectory == null
+        ? null
+        : _findPackageIcon(extractedDirectory);
+    final fileTree = extractedDirectory == null
+        ? const <PackageFileNode>[]
+        : _buildFileTree(extractedDirectory);
     final result = lowerFormat == 'tar.gz'
         ? await Process.run('tar', ['-tzf', path])
         : await Process.run('unzip', ['-l', path]);
@@ -205,6 +237,8 @@ class PackageInspectorService {
       dependencies: const [],
       editable: false,
       saveSupported: false,
+      fileTree: fileTree,
+      iconPath: iconPath,
       note:
           '$format does not expose Linux package dependencies. Change metadata during build and rebuild the artifact.',
     );
@@ -215,6 +249,8 @@ class PackageInspectorService {
     required String fileName,
     required String format,
     required int sizeBytes,
+    List<PackageFileNode> fileTree = const [],
+    String? iconPath,
     required String note,
   }) {
     return PackageInspection(
@@ -226,8 +262,190 @@ class PackageInspectorService {
       dependencies: const [],
       editable: false,
       saveSupported: false,
+      fileTree: fileTree,
+      iconPath: iconPath,
       note: note,
     );
+  }
+
+  Future<Directory?> _extractDeb(String packagePath) async {
+    final directory = await Directory.systemTemp.createTemp(
+      'pack_foundry_package_inspect_',
+    );
+    final result = await Process.run('dpkg-deb', [
+      '-R',
+      packagePath,
+      directory.path,
+    ]);
+    if (result.exitCode != 0) {
+      await _deleteDirectoryIfEmpty(directory);
+      return null;
+    }
+    return directory;
+  }
+
+  Future<Directory?> _extractRpm(String packagePath) async {
+    final directory = await Directory.systemTemp.createTemp(
+      'pack_foundry_package_inspect_',
+    );
+    final result = await Process.run('bash', [
+      '-lc',
+      r'cd "$1" && rpm2cpio "$2" | cpio -id --quiet',
+      '_',
+      directory.path,
+      packagePath,
+    ]);
+    if (result.exitCode != 0) {
+      await _deleteDirectoryIfEmpty(directory);
+      return null;
+    }
+    return directory;
+  }
+
+  Future<Directory?> _extractArchive(String packagePath, String format) async {
+    if (format != 'tar.gz' && format != 'apk' && format != 'zip') {
+      return null;
+    }
+    final directory = await Directory.systemTemp.createTemp(
+      'pack_foundry_package_inspect_',
+    );
+    final result = format == 'tar.gz'
+        ? await Process.run('tar', ['-xzf', packagePath, '-C', directory.path])
+        : await Process.run('unzip', ['-q', packagePath, '-d', directory.path]);
+    if (result.exitCode != 0) {
+      await _deleteDirectoryIfEmpty(directory);
+      return null;
+    }
+    return directory;
+  }
+
+  List<PackageFileNode> _buildFileTree(Directory root) {
+    var remainingNodes = _maxFileTreeNodes;
+    return _buildDirectoryChildren(
+      root,
+      root.path,
+      depth: 0,
+      remainingNodes: () => remainingNodes,
+      consumeNode: () => remainingNodes--,
+    );
+  }
+
+  List<PackageFileNode> _buildDirectoryChildren(
+    Directory directory,
+    String rootPath, {
+    required int depth,
+    required int Function() remainingNodes,
+    required void Function() consumeNode,
+  }) {
+    if (depth >= _maxFileTreeDepth || remainingNodes() <= 0) {
+      return const [];
+    }
+
+    final entities = directory.listSync(followLinks: false)
+      ..sort((a, b) {
+        final aIsDirectory = a is Directory;
+        final bIsDirectory = b is Directory;
+        if (aIsDirectory != bIsDirectory) {
+          return aIsDirectory ? -1 : 1;
+        }
+        return _fileName(
+          a.path,
+        ).toLowerCase().compareTo(_fileName(b.path).toLowerCase());
+      });
+
+    final nodes = <PackageFileNode>[];
+    for (final entity in entities) {
+      if (remainingNodes() <= 0) {
+        break;
+      }
+      consumeNode();
+      final name = _fileName(entity.path);
+      final relativePath = _relativePath(rootPath, entity.path);
+      if (entity is Directory) {
+        nodes.add(
+          PackageFileNode(
+            name: name,
+            path: relativePath,
+            isDirectory: true,
+            children: _buildDirectoryChildren(
+              entity,
+              rootPath,
+              depth: depth + 1,
+              remainingNodes: remainingNodes,
+              consumeNode: consumeNode,
+            ),
+          ),
+        );
+      } else if (entity is File) {
+        int? size;
+        try {
+          size = entity.lengthSync();
+        } on FileSystemException {
+          size = null;
+        }
+        nodes.add(
+          PackageFileNode(
+            name: name,
+            path: relativePath,
+            isDirectory: false,
+            sizeBytes: size,
+          ),
+        );
+      }
+    }
+    return nodes;
+  }
+
+  String? _findPackageIcon(Directory directory) {
+    final candidates = <File>[];
+    for (final entity in directory.listSync(recursive: true)) {
+      if (entity is! File) {
+        continue;
+      }
+      final lower = entity.path.toLowerCase();
+      if (!lower.endsWith('.png') && !lower.endsWith('.svg')) {
+        continue;
+      }
+      if (lower.contains('/usr/share/icons/') ||
+          lower.contains('/usr/share/pixmaps/') ||
+          lower.endsWith('/.diricon') ||
+          lower.contains('pack_foundry_window_icon')) {
+        candidates.add(entity);
+      }
+    }
+    if (candidates.isEmpty) {
+      return null;
+    }
+    candidates.sort((a, b) => _iconScore(b).compareTo(_iconScore(a)));
+    return candidates.first.path;
+  }
+
+  int _iconScore(File file) {
+    final path = file.path.toLowerCase();
+    var score = 0;
+    if (path.endsWith('.png')) {
+      score += 1000;
+    }
+    if (path.contains('/apps/')) {
+      score += 500;
+    }
+    if (path.contains('256x256')) {
+      score += 256;
+    } else if (path.contains('128x128')) {
+      score += 128;
+    } else if (path.contains('64x64')) {
+      score += 64;
+    } else if (path.contains('scalable')) {
+      score += 48;
+    }
+    return score;
+  }
+
+  Future<String?> _deleteDirectoryIfEmpty(Directory directory) async {
+    if (directory.existsSync()) {
+      await directory.delete(recursive: true);
+    }
+    return null;
   }
 
   Map<String, String> _parseDebControl(String text) {
@@ -317,6 +535,16 @@ class PackageInspectorService {
 
   String _fileName(String path) {
     return path.split(Platform.pathSeparator).last;
+  }
+
+  String _relativePath(String rootPath, String path) {
+    if (!path.startsWith(rootPath)) {
+      return path;
+    }
+    final relative = path.substring(rootPath.length);
+    return relative
+        .replaceFirst(RegExp('^${RegExp.escape(Platform.pathSeparator)}'), '')
+        .replaceAll(Platform.pathSeparator, '/');
   }
 
   String _joinPath(String first, String second) {
