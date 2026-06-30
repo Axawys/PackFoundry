@@ -15,6 +15,20 @@ class BuildTarget {
     return status == TargetStatus.ready || status == TargetStatus.installable;
   }
 
+  /// Short, language-agnostic package-format label shown in the target picker
+  /// (e.g. `appimage`, `deb`, `.exe`). Falls back to [artifact] for formats
+  /// without a dedicated short name.
+  String get displayLabel {
+    return switch (artifact) {
+      'AppImage' => 'appimage',
+      'deb package' => 'deb',
+      'rpm package' => 'rpm',
+      'tar.gz bundle' => 'tar.gz',
+      'Inno Setup exe' => '.exe',
+      _ => artifact,
+    };
+  }
+
   String get statusLabel {
     return switch (status) {
       TargetStatus.ready => 'Ready to build on this machine',

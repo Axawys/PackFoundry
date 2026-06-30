@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../core/models/build_configuration.dart';
 import '../../core/models/build_log_entry.dart';
 import '../../l10n/app_localizations.dart';
+import '../theme/app_theme.dart';
 import 'section.dart';
 
 class BuildPanel extends StatefulWidget {
@@ -637,7 +638,7 @@ class _BuildCommands extends StatelessWidget {
           step: steps[index],
           commands: commands,
           firstCommandNumber: nextCommandNumber,
-          color: _groupColor(index),
+          color: Theme.of(context).colorScheme.outlineVariant,
         ),
       );
       nextCommandNumber += commands.length;
@@ -769,7 +770,8 @@ install -Dm0644 "$RPM_ICON" %{buildroot}$RPM_ICON_DEST
 /usr/share/icons/hicolor/*/apps/$DESKTOP_ID.*
 EOF''',
         r'rpmbuild -bb --define "_topdir $RPM_TOP" "$RPM_SPEC"',
-        r'find "$RPM_TOP/RPMS" -type f -name "*.rpm" -exec cp -f {} "$EXPORT/" \;',
+        r'RPM_FILE="$(find "$RPM_TOP/RPMS" -type f -name "*.rpm" | head -n 1)"',
+        r'cp -f "$RPM_FILE" "$EXPORT/${APP_NAME}_linux_${VERSION}-1_${LINUX_ARTIFACT_ARCH}.rpm"',
       ];
     }
 
@@ -818,8 +820,8 @@ fi''',
   curl -fL "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-$APPIMAGE_ARCH.AppImage" -o "$APPIMAGETOOL"
   chmod +x "$APPIMAGETOOL"
 fi''',
-        r'ARCH="$(uname -m)" APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGETOOL" "$APPDIR" "$EXPORT/$APP_NAME.AppImage"',
-        r'chmod +x "$EXPORT/$APP_NAME.AppImage"',
+        r'ARCH="$(uname -m)" APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGETOOL" "$APPDIR" "$EXPORT/${APP_NAME}_linux_${VERSION}_${LINUX_ARTIFACT_ARCH}.AppImage"',
+        r'chmod +x "$EXPORT/${APP_NAME}_linux_${VERSION}_${LINUX_ARTIFACT_ARCH}.AppImage"',
       ];
     }
 
@@ -863,7 +865,12 @@ if [ -n "$PACKFOUNDRY_ICON_PATH" ] && [ -f "/work/$PACKFOUNDRY_ICON_PATH" ]; the
     *) cp "/work/$PACKFOUNDRY_ICON_PATH" "$ROOT/usr/share/icons/hicolor/256x256/apps/$PACKFOUNDRY_DESKTOP_ID.png" ;;
   esac
 fi
-dpkg-deb --build --root-owner-group "$ROOT" "/out/$PACKFOUNDRY_PACKAGE_NAME-$PACKFOUNDRY_VERSION-$ARCH.deb"' ''',
+case "$ARCH" in
+  amd64|x86_64) OUTPUT_ARCH=x64 ;;
+  arm64|aarch64) OUTPUT_ARCH=arm64 ;;
+  *) OUTPUT_ARCH="$ARCH" ;;
+esac
+dpkg-deb --build --root-owner-group "$ROOT" "/out/${PACKFOUNDRY_APP_NAME}_linux_${PACKFOUNDRY_VERSION}_${OUTPUT_ARCH}.deb"' ''',
         r'RUNTIME="$(command -v docker || command -v podman)"',
         r'"$RUNTIME" image inspect packfoundry/deb-builder:bookworm-flutter-stable-v1',
         r'''"$RUNTIME" run --rm -v "$WORKSPACE:/work" -v "$EXPORT:/out" -v packfoundry-pub-cache:/root/.pub-cache -e PACKFOUNDRY_APP_NAME="$APP_NAME" -e PACKFOUNDRY_PACKAGE_NAME="$PACKAGE_NAME" -e PACKFOUNDRY_DESKTOP_ID="$DESKTOP_ID" -e PACKFOUNDRY_VERSION="$VERSION" -e PACKFOUNDRY_MAINTAINER="$MAINTAINER" -e PACKFOUNDRY_DESCRIPTION="$DESCRIPTION" -e PACKFOUNDRY_DEB_DEPENDS="$DEB_DEPENDS" -e PACKFOUNDRY_ICON_PATH="$WORKSPACE_ICON" packfoundry/deb-builder:bookworm-flutter-stable-v1 bash -lc "$DEB_BUILD_SCRIPT"''',
@@ -885,7 +892,7 @@ dpkg-deb --build --root-owner-group "$ROOT" "/out/$PACKFOUNDRY_PACKAGE_NAME-$PAC
 
     if (stepId == 'targz') {
       return const [
-        r'tar -czf "$EXPORT/$PACKAGE_NAME-linux.tar.gz" -C "$(dirname "$BUNDLE")" "$(basename "$BUNDLE")"',
+        r'tar -czf "$EXPORT/${APP_NAME}_linux_${VERSION}_${LINUX_ARTIFACT_ARCH}.tar.gz" -C "$(dirname "$BUNDLE")" "$(basename "$BUNDLE")"',
       ];
     }
 
@@ -954,7 +961,7 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 INNO''',
-        r'cd "$WORK_ROOT" && zip -qr "$EXPORT/${APP_NAME}_windows_build_kit.zip" "$(basename "$WINDOWS_KIT")"',
+        r'cd "$WORK_ROOT" && zip -qr "$EXPORT/${APP_NAME}_windows_${VERSION}_x64_build_kit.zip" "$(basename "$WINDOWS_KIT")"',
         r'# On Windows: powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1',
       ];
     }
@@ -967,7 +974,7 @@ INNO''',
       return const [
         r'APK="$(find "$WORKSPACE/build/app/outputs" -type f -name "*release*.apk" | head -n 1)"',
         r'test -f "$APK"',
-        r'cp -f "$APK" "$EXPORT/${APP_NAME}_${VERSION}.apk"',
+        r'cp -f "$APK" "$EXPORT/${APP_NAME}_android_${VERSION}_universal.apk"',
       ];
     }
 
@@ -991,6 +998,12 @@ INNO''',
         'ICON=${_shellQuote(icon)}',
         'MAINTAINER=${_shellQuote(maintainer)}',
         'DESCRIPTION=${_shellQuote(description)}',
+        r'''LINUX_ARCH_RAW="$(uname -m)"
+case "$LINUX_ARCH_RAW" in
+  x86_64|amd64) LINUX_ARTIFACT_ARCH=x64 ;;
+  aarch64|arm64) LINUX_ARTIFACT_ARCH=arm64 ;;
+  *) LINUX_ARTIFACT_ARCH="$LINUX_ARCH_RAW" ;;
+esac''',
         r'WORK_ROOT="$(mktemp -d -t packfoundry-manual-XXXXXX)"',
         r'WORKSPACE="$WORK_ROOT/project"',
         r'test -f "$PROJECT/pubspec.yaml"',
@@ -1070,17 +1083,6 @@ INNO''',
     return trimmed;
   }
 
-  Color _groupColor(int index) {
-    const colors = [
-      Color(0xFF0F766E),
-      Color(0xFF2563EB),
-      Color(0xFF7C3AED),
-      Color(0xFFCA8A04),
-      Color(0xFFDC2626),
-      Color(0xFF0891B2),
-    ];
-    return colors[index % colors.length];
-  }
 }
 
 class _CommandGroupData {
@@ -1218,14 +1220,13 @@ class _CommandGroup extends StatelessWidget {
   }
 
   Color _stateColor(BuildContext context, BuildRoadmapStepState state) {
+    final colorScheme = Theme.of(context).colorScheme;
     return switch (state) {
-      BuildRoadmapStepState.pending => Theme.of(
-        context,
-      ).colorScheme.onSurfaceVariant,
-      BuildRoadmapStepState.running => Theme.of(context).colorScheme.primary,
-      BuildRoadmapStepState.success => const Color(0xFF16A34A),
-      BuildRoadmapStepState.warning => const Color(0xFFDC2626),
-      BuildRoadmapStepState.skipped => const Color(0xFFF59E0B),
+      BuildRoadmapStepState.pending => colorScheme.onSurfaceVariant,
+      BuildRoadmapStepState.running => colorScheme.onSurfaceVariant,
+      BuildRoadmapStepState.success => context.status.success,
+      BuildRoadmapStepState.warning => context.status.problem,
+      BuildRoadmapStepState.skipped => colorScheme.onSurfaceVariant,
     };
   }
 }
@@ -1631,12 +1632,13 @@ class _RoadmapStepCard extends StatelessWidget {
   }
 
   Color _stepColor(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return switch (step.state) {
-      BuildRoadmapStepState.pending => Theme.of(context).colorScheme.outline,
-      BuildRoadmapStepState.running => Theme.of(context).colorScheme.primary,
-      BuildRoadmapStepState.success => const Color(0xFF16A34A),
-      BuildRoadmapStepState.warning => const Color(0xFFDC2626),
-      BuildRoadmapStepState.skipped => const Color(0xFFF59E0B),
+      BuildRoadmapStepState.pending => colorScheme.outline,
+      BuildRoadmapStepState.running => colorScheme.onSurfaceVariant,
+      BuildRoadmapStepState.success => context.status.success,
+      BuildRoadmapStepState.warning => context.status.problem,
+      BuildRoadmapStepState.skipped => colorScheme.outline,
     };
   }
 }
@@ -1785,9 +1787,9 @@ class _LogEntryTile extends StatelessWidget {
   Color _entryColor(BuildContext context) {
     return switch (entry.state) {
       BuildLogState.idle => Theme.of(context).colorScheme.onSurfaceVariant,
-      BuildLogState.running => Theme.of(context).colorScheme.primary,
-      BuildLogState.success => const Color(0xFF16A34A),
-      BuildLogState.warning => const Color(0xFFF59E0B),
+      BuildLogState.running => Theme.of(context).colorScheme.onSurfaceVariant,
+      BuildLogState.success => context.status.success,
+      BuildLogState.warning => context.status.problem,
     };
   }
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/models/chip_tone.dart';
+import '../theme/app_theme.dart';
 
 class StatusChip extends StatelessWidget {
   const StatusChip({required this.label, required this.tone, super.key});
@@ -10,14 +11,15 @@ class StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final status = context.status;
     final colors = switch (tone) {
       ChipTone.good => (
-        foreground: const Color(0xFF166534),
-        background: const Color(0xFFDCFCE7),
+        foreground: status.onSuccessContainer,
+        background: status.successContainer,
       ),
       ChipTone.warning => (
-        foreground: const Color(0xFF92400E),
-        background: const Color(0xFFFEF3C7),
+        foreground: status.onProblemContainer,
+        background: status.problemContainer,
       ),
       ChipTone.neutral => (
         foreground: Theme.of(context).colorScheme.onSurfaceVariant,

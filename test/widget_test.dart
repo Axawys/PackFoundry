@@ -27,7 +27,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('PackFoundry'), findsOneWidget);
+    expect(find.byType(TabBar), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
     expect(find.text('Project'), findsWidgets);
     expect(find.text('Build'), findsOneWidget);
@@ -171,7 +171,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    final appImageTarget = find.text('Linux AppImage');
+    final appImageTarget = find.text('appimage');
     await tester.ensureVisible(appImageTarget);
     await tester.tap(appImageTarget);
     await tester.pump();

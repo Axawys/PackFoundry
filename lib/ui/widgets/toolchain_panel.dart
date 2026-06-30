@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/models/tool_status.dart';
 import '../../l10n/app_localizations.dart';
+import '../theme/app_theme.dart';
 import 'section.dart';
 
 class ToolchainPanel extends StatelessWidget {
@@ -421,8 +422,9 @@ class _ToolRow extends StatelessWidget {
 
 Color _statusColor(BuildContext context, ToolAvailability status) {
   return switch (status) {
-    ToolAvailability.installed => const Color(0xFF16A34A),
-    ToolAvailability.available => Theme.of(context).colorScheme.primary,
-    ToolAvailability.missing => const Color(0xFFF59E0B),
+    ToolAvailability.installed => context.status.success,
+    ToolAvailability.available =>
+      Theme.of(context).colorScheme.onSurfaceVariant,
+    ToolAvailability.missing => context.status.problem,
   };
 }

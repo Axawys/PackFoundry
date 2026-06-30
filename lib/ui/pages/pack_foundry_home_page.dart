@@ -55,8 +55,10 @@ class PackFoundryHomePage extends StatefulWidget {
   State<PackFoundryHomePage> createState() => _PackFoundryHomePageState();
 }
 
-class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
+class _PackFoundryHomePageState extends State<PackFoundryHomePage>
+    with SingleTickerProviderStateMixin {
   static const _defaultAppName = 'My Flutter App';
+  static const _workspaceCount = 4;
 
   final _buildService = BuildService();
   final _toolchainService = ToolchainService();
@@ -94,6 +96,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
   int _buildProgress = 0;
   bool _welcomeDialogShown = false;
   int _workspaceIndex = 1;
+  late final TabController _workspaceTabController;
   ToolAvailability _flutterStatus = ToolAvailability.available;
   ToolAvailability _linuxToolchainStatus = ToolAvailability.available;
   ToolAvailability _containerRuntimeStatus = ToolAvailability.available;
@@ -141,25 +144,31 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       artifact: 'APK',
       status: TargetStatus.installable,
     ),
-    BuildTarget(
-      platform: 'macOS',
-      artifact: 'dmg',
-      status: TargetStatus.hostLimited,
-    ),
-    BuildTarget(
-      platform: 'iOS',
-      artifact: 'ipa',
-      status: TargetStatus.hostLimited,
-    ),
   ];
 
   @override
   void initState() {
     super.initState();
+    _workspaceTabController = TabController(
+      length: _workspaceCount,
+      initialIndex: _workspaceIndex,
+      vsync: this,
+    );
+    _workspaceTabController.addListener(_handleWorkspaceTabChanged);
     _loadReleaseMetadata();
     if (widget.enableToolchainDiagnostics) {
       _refreshToolchainStatus();
     }
+  }
+
+  void _handleWorkspaceTabChanged() {
+    final index = _workspaceTabController.index;
+    if (index == _workspaceIndex) {
+      return;
+    }
+    setState(() {
+      _workspaceIndex = index;
+    });
   }
 
   Future<void> _loadReleaseMetadata() async {
@@ -1229,6 +1238,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
 
   @override
   void dispose() {
+    _workspaceTabController.removeListener(_handleWorkspaceTabChanged);
+    _workspaceTabController.dispose();
     _runningProjectProcess?.kill(ProcessSignal.sigterm);
     if (_metadataListenersAttached) {
       for (final controller in _metadataControllers) {
@@ -2086,120 +2097,98 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage> {
       ),
     ];
 
+    final content = _WorkspaceContent(
+      index: _workspaceIndex,
+      themeMode: widget.themeMode,
+      localeMode: widget.localeMode,
+      toolGroups: toolGroups,
+      installingToolTarget: _installingToolTarget,
+      projectPath: _projectPath,
+      projectChecks: _projectChecks,
+      iconPath: _iconPath,
+      outputPath: _outputPath,
+      appNameController: _appNameController,
+      releaseTagController: _releaseTagController,
+      developerEmailController: _developerEmailController,
+      publisherNameController: _publisherNameController,
+      homepageUrlController: _homepageUrlController,
+      licenseController: _licenseController,
+      descriptionController: _descriptionController,
+      widthController: _widthController,
+      heightController: _heightController,
+      debAdditionalDependenciesController:
+          _debAdditionalDependenciesController,
+      rpmAdditionalDependenciesController:
+          _rpmAdditionalDependenciesController,
+      packageInspection: _packageInspection,
+      packageMetadataController: _packageMetadataController,
+      packageDependenciesController: _packageDependenciesController,
+      isInspectingPackage: _isInspectingPackage,
+      targets: _targets,
+      selectedTargets: selectedTargets,
+      isBuilding: _isBuilding,
+      isRunningProject: _isRunningProject,
+      progress: _buildProgress,
+      roadmapSteps: _roadmapSteps,
+      log: _buildLog,
+      onThemeModeChanged: widget.onThemeModeChanged,
+      onLocaleModeChanged: widget.onLocaleModeChanged,
+      onInstallTools: _installTools,
+      onRemoveTools: _removeTools,
+      onCancelInstall: _cancelToolInstall,
+      onChooseProject: _chooseProjectFolder,
+      onImportConfig: _importProjectConfig,
+      onExportConfig: _exportProjectConfig,
+      onChooseIcon: _chooseIconFile,
+      onChooseOutput: _chooseOutputFolder,
+      onChoosePackage: _choosePackageFile,
+      onTargetChanged: _setTargetSelection,
+      onSaveEditedPackage: _saveEditedPackage,
+      onBuild: _runBuild,
+      onRunProject: _runProjectWithoutBuild,
+      onStopProject: _stopRunningProject,
+    );
+
     return Scaffold(
       appBar: AppBar(
-        leading: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Image.asset('assets/icon.png'),
-        ),
-        title: Text(l10n.appTitle),
-      ),
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final isWide = constraints.maxWidth >= 900;
-            final content = _WorkspaceContent(
-              index: _workspaceIndex,
-              themeMode: widget.themeMode,
-              localeMode: widget.localeMode,
-              toolGroups: toolGroups,
-              installingToolTarget: _installingToolTarget,
-              projectPath: _projectPath,
-              projectChecks: _projectChecks,
-              iconPath: _iconPath,
-              outputPath: _outputPath,
-              appNameController: _appNameController,
-              releaseTagController: _releaseTagController,
-              developerEmailController: _developerEmailController,
-              publisherNameController: _publisherNameController,
-              homepageUrlController: _homepageUrlController,
-              licenseController: _licenseController,
-              descriptionController: _descriptionController,
-              widthController: _widthController,
-              heightController: _heightController,
-              debAdditionalDependenciesController:
-                  _debAdditionalDependenciesController,
-              rpmAdditionalDependenciesController:
-                  _rpmAdditionalDependenciesController,
-              packageInspection: _packageInspection,
-              packageMetadataController: _packageMetadataController,
-              packageDependenciesController: _packageDependenciesController,
-              isInspectingPackage: _isInspectingPackage,
-              targets: _targets,
-              selectedTargets: selectedTargets,
-              isBuilding: _isBuilding,
-              isRunningProject: _isRunningProject,
-              progress: _buildProgress,
-              roadmapSteps: _roadmapSteps,
-              log: _buildLog,
-              onThemeModeChanged: widget.onThemeModeChanged,
-              onLocaleModeChanged: widget.onLocaleModeChanged,
-              onInstallTools: _installTools,
-              onRemoveTools: _removeTools,
-              onCancelInstall: _cancelToolInstall,
-              onChooseProject: _chooseProjectFolder,
-              onImportConfig: _importProjectConfig,
-              onExportConfig: _exportProjectConfig,
-              onChooseIcon: _chooseIconFile,
-              onChooseOutput: _chooseOutputFolder,
-              onChoosePackage: _choosePackageFile,
-              onTargetChanged: _setTargetSelection,
-              onSaveEditedPackage: _saveEditedPackage,
-              onBuild: _runBuild,
-              onRunProject: _runProjectWithoutBuild,
-              onStopProject: _stopRunningProject,
-            );
-
-            if (isWide) {
-              return Row(
-                children: [
-                  NavigationRail(
-                    selectedIndex: _workspaceIndex,
-                    onDestinationSelected: (index) {
-                      setState(() {
-                        _workspaceIndex = index;
-                      });
-                    },
-                    labelType: NavigationRailLabelType.all,
-                    destinations: [
-                      for (final workspace in workspaces)
-                        NavigationRailDestination(
-                          icon: Icon(workspace.icon),
-                          selectedIcon: Icon(workspace.selectedIcon),
-                          label: Text(workspace.label),
-                        ),
-                    ],
-                  ),
-                  const VerticalDivider(width: 1),
-                  Expanded(child: content),
-                ],
-              );
-            }
-
-            return Column(
-              children: [
-                Expanded(child: content),
-                NavigationBar(
-                  selectedIndex: _workspaceIndex,
-                  onDestinationSelected: (index) {
-                    setState(() {
-                      _workspaceIndex = index;
-                    });
-                  },
-                  destinations: [
-                    for (final workspace in workspaces)
-                      NavigationDestination(
-                        icon: Icon(workspace.icon),
-                        selectedIcon: Icon(workspace.selectedIcon),
-                        label: workspace.label,
+        automaticallyImplyLeading: false,
+        titleSpacing: 16,
+        title: Row(
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Image.asset('assets/icon.png', height: 26),
+            ),
+            Expanded(
+              child: TabBar(
+                controller: _workspaceTabController,
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                tabs: [
+                  for (var index = 0; index < workspaces.length; index++)
+                    Tab(
+                      height: 48,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            index == _workspaceIndex
+                                ? workspaces[index].selectedIcon
+                                : workspaces[index].icon,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(workspaces[index].label),
+                        ],
                       ),
-                  ],
-                ),
-              ],
-            );
-          },
+                    ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
+      body: SafeArea(child: content),
     );
   }
 
@@ -2451,12 +2440,9 @@ class _WorkspaceContent extends StatelessWidget {
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1120),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: children,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children,
       ),
     );
   }

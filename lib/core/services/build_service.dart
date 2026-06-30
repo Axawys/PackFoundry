@@ -919,7 +919,7 @@ class BuildService {
           ),
         );
         yield* _createTarGzBundle(
-          appName: configuration.appName,
+          configuration: configuration,
           bundleDirectory: bundleDirectory,
           outputDirectory: outputDirectory,
         );
@@ -979,7 +979,7 @@ class BuildService {
           ? 'Flutter App'
           : configuration.appName.trim();
       final packageName = _slugify(appName);
-      final safeName = _safeFileName(appName);
+      final version = _artifactVersion(configuration);
       tempDirectory = await Directory.systemTemp.createTemp(
         'pack_foundry_windows_kit_',
       );
@@ -1033,7 +1033,10 @@ class BuildService {
       );
 
       final outputFile = File(
-        _joinPath(outputDirectory.path, '${safeName}_windows_build_kit.zip'),
+        _joinPath(
+          outputDirectory.path,
+          '${_artifactFileStem(appName: appName, platform: 'windows', version: version)}_x64_build_kit.zip',
+        ),
       );
       if (outputFile.existsSync()) {
         await outputFile.delete();
@@ -1160,13 +1163,17 @@ class BuildService {
     final appName = configuration.appName.trim().isEmpty
         ? 'Flutter App'
         : configuration.appName.trim();
-    final version = _packageVersion(configuration);
+    final version = _artifactVersion(configuration);
     final outputFile = File(
       _joinPath(
         outputDirectory.path,
-        version == null
-            ? '${_safeFileName(appName)}.apk'
-            : '${_safeFileName(appName)}_$version.apk',
+        _artifactFileName(
+          appName: appName,
+          platform: 'android',
+          version: version,
+          architecture: 'universal',
+          extension: 'apk',
+        ),
       ),
     );
     if (outputFile.existsSync()) {
@@ -1607,7 +1614,13 @@ Required Windows-side tools prepared by the script:
 
       final appImagePath = _joinPath(
         outputDirectory.path,
-        '${_safeFileName(appName)}.AppImage',
+        _artifactFileName(
+          appName: appName,
+          platform: 'linux',
+          version: _artifactVersion(configuration),
+          architecture: _linuxArtifactArchitecture(),
+          extension: 'AppImage',
+        ),
       );
       final appImageFile = File(appImagePath);
       if (appImageFile.existsSync()) {
@@ -1685,13 +1698,22 @@ Required Windows-side tools prepared by the script:
   }
 
   Stream<BuildEvent> _createTarGzBundle({
-    required String appName,
+    required BuildConfiguration configuration,
     required Directory bundleDirectory,
     required Directory outputDirectory,
   }) async* {
+    final appName = configuration.appName.trim().isEmpty
+        ? 'Flutter App'
+        : configuration.appName.trim();
     final archivePath = _joinPath(
       outputDirectory.path,
-      '${_slugify(appName)}-linux.tar.gz',
+      _artifactFileName(
+        appName: appName,
+        platform: 'linux',
+        version: _artifactVersion(configuration),
+        architecture: _linuxArtifactArchitecture(),
+        extension: 'tar.gz',
+      ),
     );
     final archiveResult = await Process.run(
       'tar',
@@ -1866,7 +1888,13 @@ Terminal=false
       final outputFile = File(
         _joinPath(
           outputDirectory.path,
-          '${_safeFileName(appName)}-${rpmVersion.version}-${rpmVersion.release}.${_rpmArchitecture()}.rpm',
+          _artifactFileName(
+            appName: appName,
+            platform: 'linux',
+            version: '${rpmVersion.version}-${rpmVersion.release}',
+            architecture: _linuxArtifactArchitecture(),
+            extension: 'rpm',
+          ),
         ),
       );
       if (outputFile.existsSync()) {
@@ -2022,19 +2050,6 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
     return fallbackIcon;
   }
 
-  String _rpmArchitecture() {
-    final architecture = Process.runSync('uname', [
-      '-m',
-    ]).stdout.toString().trim();
-    return switch (architecture) {
-      'x86_64' => 'x86_64',
-      'aarch64' => 'aarch64',
-      'arm64' => 'aarch64',
-      final value when value.isNotEmpty => value,
-      _ => 'x86_64',
-    };
-  }
-
   String _rpmHeaderValue(String value) {
     return value.replaceAll('\n', ' ').replaceAll('\r', ' ');
   }
@@ -2128,7 +2143,11 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
       workspace: workspace,
       iconPath: configuration.iconPath,
     );
-    final outputFileName = '${_safeFileName(appName)}_$version';
+    final outputFileName = _artifactFileStem(
+      appName: appName,
+      platform: 'linux',
+      version: version,
+    );
     final dockerArguments = [
       'run',
       '--rm',
@@ -2255,14 +2274,16 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
         id: _stepDebPackage,
         state: BuildRoadmapStepState.success,
         progress: 100,
-        detail: debPath ?? '${_safeFileName(appName)}_$version.deb',
+        detail:
+            debPath ?? '${outputFileName}_${_linuxArtifactArchitecture()}.deb',
       ),
     );
     yield BuildEvent.progress(95);
     yield BuildEvent.log(
       BuildLogEntry(
         title: 'Created deb package',
-        detail: debPath ?? '${_safeFileName(appName)}_$version.deb',
+        detail:
+            debPath ?? '${outputFileName}_${_linuxArtifactArchitecture()}.deb',
         state: BuildLogState.success,
       ),
     );
@@ -2368,7 +2389,12 @@ EOF
 fi
 
 pf_step 91 "Build DEB archive" "Running dpkg-deb --build for the package root."
-deb_path="/out/${PACKFOUNDRY_OUTPUT_BASENAME}_${arch}.deb"
+case "$arch" in
+  amd64|x86_64) output_arch=x64 ;;
+  arm64|aarch64) output_arch=arm64 ;;
+  *) output_arch="$arch" ;;
+esac
+deb_path="/out/${PACKFOUNDRY_OUTPUT_BASENAME}_${output_arch}.deb"
 rm -f "$deb_path"
 dpkg-deb --build --root-owner-group "$package_root" "$deb_path"
 pf_step 94 "Export DEB artifact" "$deb_path"
@@ -2949,6 +2975,48 @@ Terminal=false
       'aarch64' => 'aarch64',
       'arm64' => 'aarch64',
       _ => 'x86_64',
+    };
+  }
+
+  String _artifactVersion(BuildConfiguration configuration) {
+    return _packageVersion(configuration, fallback: '1.0.0') ?? '1.0.0';
+  }
+
+  String _artifactFileStem({
+    required String appName,
+    required String platform,
+    required String version,
+  }) {
+    return [
+      _safeFileName(appName),
+      _safeFileName(platform.toLowerCase()),
+      _safeFileName(version),
+    ].join('_');
+  }
+
+  String _artifactFileName({
+    required String appName,
+    required String platform,
+    required String version,
+    required String architecture,
+    required String extension,
+  }) {
+    final stem = [
+      _artifactFileStem(appName: appName, platform: platform, version: version),
+      _safeFileName(architecture),
+    ].join('_');
+    return '$stem.$extension';
+  }
+
+  String _linuxArtifactArchitecture() {
+    final architecture = Process.runSync('uname', [
+      '-m',
+    ]).stdout.toString().trim();
+    return switch (architecture) {
+      'x86_64' || 'amd64' => 'x64',
+      'aarch64' || 'arm64' => 'arm64',
+      final value when value.isNotEmpty => value,
+      _ => 'x64',
     };
   }
 

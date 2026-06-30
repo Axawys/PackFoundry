@@ -128,7 +128,7 @@ libgtk-3-0 | libgtk-3-0t64
 3. В папке экспорта появится архив:
 
 ```text
-*_windows_build_kit.zip
+*_windows_1.3.0_x64_build_kit.zip
 ```
 
 4. Скопируйте архив в Windows 10/11 или Windows VM.
@@ -201,6 +201,25 @@ $choose_in_packfoundry
 
 - `deb` записывается в `Depends`;
 - `rpm` записывается в `Requires`.
+
+## Имена выходных файлов
+
+PackFoundry использует единый шаблон имен:
+
+```text
+AppName_platform_version_arch.ext
+```
+
+Примеры:
+
+```text
+HashChecker_linux_1.3.0_x64.AppImage
+HashChecker_linux_1.3.0_x64.tar.gz
+HashChecker_linux_1.3.0_x64.deb
+HashChecker_linux_1.3.0-1_x64.rpm
+HashChecker_android_1.3.0_universal.apk
+HashChecker_windows_1.3.0_x64_build_kit.zip
+```
 
 ## Как работает сборка
 

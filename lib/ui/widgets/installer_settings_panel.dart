@@ -78,10 +78,7 @@ class InstallerSettingsPanel extends StatelessWidget {
                       child: _InstallerTargetTile(
                         target: target,
                         icon: _targetIcon(target),
-                        title: l10n.targetTitle(
-                          target.platform,
-                          target.artifact,
-                        ),
+                        title: target.displayLabel,
                         subtitle: l10n.targetStatusLabel(target.status.name),
                         onChanged: (selected) => onChanged(target, selected),
                       ),

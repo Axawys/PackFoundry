@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'core/services/app_preferences.dart';
+import 'core/services/window_chrome.dart';
 import 'l10n/app_localizations.dart';
 import 'ui/pages/pack_foundry_home_page.dart';
+import 'ui/theme/app_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,6 +27,7 @@ class _PackFoundryAppState extends State<PackFoundryApp> {
   AppLocaleMode _localeMode = AppLocaleMode.system;
   bool _showWelcome = false;
   bool _settingsLoaded = false;
+  bool? _darkTitleBar;
 
   @override
   void initState() {
@@ -60,6 +63,16 @@ class _PackFoundryAppState extends State<PackFoundryApp> {
     await _preferences.saveLocaleMode(localeMode);
   }
 
+  void _syncTitleBar(bool dark) {
+    if (_darkTitleBar == dark) {
+      return;
+    }
+    _darkTitleBar = dark;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      WindowChrome.setDarkTitleBar(dark);
+    });
+  }
+
   Future<void> _completeWelcome({required bool hideWelcome}) async {
     await _preferences.saveHideWelcome(hideWelcome);
     if (!mounted) {
@@ -78,8 +91,12 @@ class _PackFoundryAppState extends State<PackFoundryApp> {
       debugShowCheckedModeBanner: false,
       themeMode: _themeMode,
       locale: _localeMode.locale,
-      theme: _buildTheme(Brightness.light),
-      darkTheme: _buildTheme(Brightness.dark),
+      theme: buildAppTheme(Brightness.light),
+      darkTheme: buildAppTheme(Brightness.dark),
+      builder: (context, child) {
+        _syncTitleBar(Theme.of(context).brightness == Brightness.dark);
+        return child!;
+      },
       localizationsDelegates: const [
         AppLocalizations.delegate,
         GlobalMaterialLocalizations.delegate,
@@ -95,20 +112,6 @@ class _PackFoundryAppState extends State<PackFoundryApp> {
         onLocaleModeChanged: _setLocaleMode,
         onWelcomeCompleted: _completeWelcome,
         enableToolchainDiagnostics: widget.enableToolchainDiagnostics,
-      ),
-    );
-  }
-
-  ThemeData _buildTheme(Brightness brightness) {
-    return ThemeData(
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF0EA5A4),
-        brightness: brightness,
-      ),
-      useMaterial3: true,
-      inputDecorationTheme: const InputDecorationTheme(
-        border: OutlineInputBorder(),
-        isDense: true,
       ),
     );
   }
