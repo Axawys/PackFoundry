@@ -65,6 +65,7 @@ class AppLocalizations {
   String get noProjectSelected =>
       _isRu ? 'Проект не выбран' : 'No project selected';
   String get chooseFolder => _isRu ? 'Выбрать папку' : 'Choose folder';
+  String get projectPath => _isRu ? 'Путь к проекту' : 'Project path';
   String get chooseProject => _isRu ? 'Выбрать проект' : 'Choose project';
   String get chooseOutput => _isRu ? 'Выбрать папку экспорта' : 'Choose output';
   String get importConfig => _isRu ? 'Импорт конфига' : 'Import config';
@@ -81,8 +82,6 @@ class AppLocalizations {
       _isRu ? 'Linux runner найден' : 'Linux runner found';
   String get windowsRunnerFound =>
       _isRu ? 'Windows runner найден' : 'Windows runner found';
-  String get desktopRunnersMissing =>
-      _isRu ? 'Desktop runners не найдены' : 'Desktop runners missing';
   String get projectVersionFound => _isRu ? 'Версия найдена' : 'Version found';
   String get projectVersionMissing =>
       _isRu ? 'Версия не указана' : 'Version missing';
@@ -107,6 +106,32 @@ class AppLocalizations {
         ? 'Не удалось экспортировать конфиг: $detail'
         : 'Could not export config: $detail';
   }
+
+  String projectFolderNotFound(String path) {
+    return _isRu ? 'Папка не найдена: $path' : 'Folder was not found: $path';
+  }
+
+  String get configPresets => _isRu ? 'Конфиги' : 'Configs';
+  String get configPresetsHint => _isRu
+      ? 'Конфиги остаются закреплёнными, пока их файлы существуют на диске. Нажмите на конфиг, чтобы применить его.'
+      : 'Configs stay pinned as long as their files exist on disk. Click a config to apply it.';
+  String get noConfigPresets => _isRu
+      ? 'Пока нет закреплённых конфигов. Добавьте файл конфига или сохраните текущие настройки.'
+      : 'No pinned configs yet. Add a config file or save the current settings.';
+  String get addConfig => _isRu ? 'Добавить конфиг' : 'Add config';
+  String get saveCurrentConfig =>
+      _isRu ? 'Сохранить текущий' : 'Save current settings';
+  String get activeConfig => _isRu ? 'Активен' : 'Active';
+  String get configPresetBroken =>
+      _isRu ? 'Файл не читается' : 'File cannot be read';
+  String get removeConfigPreset =>
+      _isRu ? 'Убрать из списка' : 'Remove from list';
+  String get configPresetRemoved => _isRu
+      ? 'Конфиг убран из списка. Файл на диске сохранён.'
+      : 'Config was removed from the list. The file on disk is kept.';
+  String get configPresetAlreadyPinned => _isRu
+      ? 'Этот конфиг уже в списке.'
+      : 'This config is already in the list.';
 
   String get applicationSettings =>
       _isRu ? 'Настройки приложения' : 'Application settings';
@@ -375,17 +400,75 @@ class AppLocalizations {
   }
 
   String get building => _isRu ? 'Сборка...' : 'Building...';
-  String get buildInstallers =>
-      _isRu ? 'Собрать установщики' : 'Build installers';
-  String get runWithoutBuild =>
-      _isRu ? 'Запустить без сборки' : 'Run without build';
+  String get buildInstallers => _isRu ? 'Собрать' : 'Build';
+  String get runWithoutBuild => _isRu ? 'Запустить' : 'Run';
   String get runningApp => _isRu ? 'Приложение запущено' : 'App is running';
   String get stopRunningApp => _isRu ? 'Остановить' : 'Stop';
+  String get sendToDevice =>
+      _isRu ? 'Отправить на устройство' : 'Send to device';
+  String get sendToDeviceHint => _isRu
+      ? 'Собирает release APK и устанавливает его на подключенное Android-устройство.'
+      : 'Builds a release APK and installs it on the connected Android device.';
+  String get cancelSendToDevice => _isRu ? 'Отменить' : 'Cancel';
+  String get adbMissing => _isRu
+      ? 'adb не найден. Установите Android SDK во вкладке «Настройки».'
+      : 'adb was not found. Install the Android SDK on the Settings tab.';
+  String get androidDeviceSearchTitle =>
+      _isRu ? 'Поиск устройства' : 'Looking for a device';
+  String get androidDeviceMissingMessage => _isRu
+      ? 'Подключите Android-устройство по USB и включите отладку по USB в параметрах разработчика.'
+      : 'Connect an Android device over USB and enable USB debugging in the developer options.';
+  String get androidDeviceUnauthorizedTitle =>
+      _isRu ? 'Подтвердите отладку' : 'Confirm debugging';
+  String androidDeviceUnauthorizedMessage(String device) {
+    return _isRu
+        ? 'Устройство $device подключено, но не авторизовано. На экране телефона появится запрос «Разрешить отладку по USB?» с отпечатком ключа — сверьте его и нажмите «Разрешить», затем повторите проверку.'
+        : 'Device $device is connected but not authorized. The phone shows an "Allow USB debugging?" prompt with a key fingerprint — confirm it, then check again.';
+  }
+
+  String get retryDeviceCheck => _isRu ? 'Проверить снова' : 'Check again';
+  String get chooseAndroidDeviceTitle =>
+      _isRu ? 'Выберите устройство' : 'Choose a device';
+  String get androidBuildingApk =>
+      _isRu ? 'Сборка release APK...' : 'Building the release APK...';
+  String androidInstallingApk(String device) {
+    return _isRu ? 'Установка на $device...' : 'Installing on $device...';
+  }
+
+  String get androidApkMissing => _isRu
+      ? 'APK не найден после сборки. Подробности — в техническом логе.'
+      : 'The APK was not found after the build. See the technical log.';
+  String get androidBuildFailed => _isRu
+      ? 'Не удалось собрать APK. Подробности — в техническом логе.'
+      : 'The APK build failed. See the technical log.';
+  String androidInstallSucceeded(String device) {
+    return _isRu
+        ? 'APK установлен на $device.'
+        : 'The APK was installed on $device.';
+  }
+
+  String get androidInstallFailed => _isRu
+      ? 'Установка не удалась. Подробности — в техническом логе.'
+      : 'The install failed. See the technical log.';
+  String get androidSignatureConflictTitle =>
+      _isRu ? 'Установлена другая сборка' : 'A different build is installed';
+  String get androidSignatureConflictMessage => _isRu
+      ? 'На устройстве уже стоит версия приложения, подписанная другим ключом. Обновить её поверх нельзя — старую нужно удалить, вместе с ней будут потеряны данные приложения.'
+      : 'The device already has a version of the app signed with a different key. It cannot be updated in place — the old one must be removed, and the app data will be lost with it.';
+  String get removeAndInstall =>
+      _isRu ? 'Удалить и установить' : 'Uninstall and install';
+  String get androidSendCancelled =>
+      _isRu ? 'Отправка на устройство отменена.' : 'Send to device cancelled.';
   String get buildSuccessTitle =>
       _isRu ? 'Сборка завершена' : 'Build completed';
   String get buildSuccessMessage => _isRu
       ? 'Выбранные установщики успешно собраны и сохранены в папку экспорта.'
       : 'Selected installers were built successfully and saved to the output folder.';
+  String get buildWarningsTitle =>
+      _isRu ? 'Сборка не завершена' : 'Build did not finish';
+  String get buildWarningsMessage => _isRu
+      ? 'Сборка остановилась на одном из шагов. Подробности — в техническом логе ниже.'
+      : 'The build stopped on one of the steps. See the technical log below for details.';
   String get ok => _isRu ? 'OK' : 'OK';
   String get visualBuildMode => _isRu ? 'Визуально' : 'Visual';
   String get commandsBuildMode => _isRu ? 'Команды' : 'Commands';

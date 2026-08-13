@@ -10,6 +10,7 @@ class AppPreferences {
   static const _publisherNameKey = 'publisherName';
   static const _homepageUrlKey = 'homepageUrl';
   static const _projectDescriptionKey = 'projectDescription';
+  static const _configPresetsKey = 'configPresets';
 
   Future<AppSettings> load() async {
     final preferences = await SharedPreferences.getInstance();
@@ -55,6 +56,16 @@ class AppPreferences {
       preferences.setString(_homepageUrlKey, metadata.homepageUrl),
       preferences.setString(_projectDescriptionKey, metadata.description),
     ]);
+  }
+
+  Future<List<String>> loadConfigPresetPaths() async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getStringList(_configPresetsKey) ?? const [];
+  }
+
+  Future<void> saveConfigPresetPaths(List<String> paths) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setStringList(_configPresetsKey, paths);
   }
 
   ThemeMode _themeModeFromName(String? name) {

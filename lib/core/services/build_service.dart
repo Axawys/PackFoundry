@@ -28,6 +28,10 @@ class BuildService {
   static const _appImageToolBaseUrl =
       'https://github.com/AppImage/AppImageKit/releases/download/continuous';
 
+  /// Folder inside the temporary workspace that holds copies of local `path:`
+  /// dependencies living outside the project folder.
+  static const _pathDependencyFolder = '.pack_foundry_path_deps';
+
   final _builderEnvironmentService = BuilderEnvironmentService();
 
   Stream<BuildEvent> build(BuildConfiguration configuration) async* {
@@ -170,6 +174,16 @@ class BuildService {
       );
       buildTempDirectory = buildWorkspaceInfo.tempDirectory;
       final workspace = buildWorkspaceInfo.workspace;
+      if (buildWorkspaceInfo.vendoredDependencies.isNotEmpty) {
+        yield BuildEvent.log(
+          BuildLogEntry(
+            title:
+                'Copied ${buildWorkspaceInfo.vendoredDependencies.length} local path dependencies',
+            detail: buildWorkspaceInfo.vendoredDependencies.join('\n'),
+            state: BuildLogState.success,
+          ),
+        );
+      }
       yield const BuildEvent.roadmapUpdate(
         BuildRoadmapUpdate(
           id: _stepWorkspace,
@@ -674,9 +688,215 @@ class BuildService {
     );
     final workspace = Directory(_joinPath(tempRoot.path, 'project'));
     await _copyProjectDirectory(projectDirectory, workspace);
+    final vendoredDependencies = await _vendorPathDependencies(
+      workspace: workspace,
+      projectDirectory: projectDirectory,
+    );
     await _applyWindowSizeOverrides(workspace, configuration);
     await _applyIconOverrides(workspace, configuration);
-    return _BuildWorkspace(tempDirectory: tempRoot, workspace: workspace);
+    return _BuildWorkspace(
+      tempDirectory: tempRoot,
+      workspace: workspace,
+      vendoredDependencies: vendoredDependencies,
+    );
+  }
+
+  /// Copies local `path:` dependencies that live outside the project folder into
+  /// the workspace, so the temporary copy resolves them on its own.
+  ///
+  /// The workspace holds a copy of the selected folder only, and the DEB builder
+  /// mounts nothing but that folder, so a sibling dependency such as
+  /// `../shared/sync_ui` would otherwise point at a directory that was never
+  /// copied and `flutter pub get` would fail with "could not find package".
+  /// Every dependency is vendored flat into [_pathDependencyFolder] and its own
+  /// path dependencies are rewritten to siblings inside that folder, which also
+  /// covers transitive chains such as `sync_ui` -> `sync_net` -> `sync_core`.
+  Future<List<String>> _vendorPathDependencies({
+    required Directory workspace,
+    required Directory projectDirectory,
+  }) async {
+    final vendored = <String>[];
+    final pending = await _rewritePathDependencies(
+      pubspec: File(_joinPath(workspace.path, 'pubspec.yaml')),
+      sourceDirectory: projectDirectory,
+      relativePrefix: _pathDependencyFolder,
+    );
+
+    while (pending.isNotEmpty) {
+      final dependency = pending.removeLast();
+      final destination = Directory(
+        _joinPath(
+          _joinPath(workspace.path, _pathDependencyFolder),
+          dependency.name,
+        ),
+      );
+      if (destination.existsSync()) {
+        continue;
+      }
+      if (!dependency.directory.existsSync()) {
+        // Leave the broken reference in place so flutter pub get reports it.
+        continue;
+      }
+
+      await _copyProjectDirectory(dependency.directory, destination);
+      vendored.add('${dependency.name} <- ${dependency.directory.path}');
+      pending.addAll(
+        await _rewritePathDependencies(
+          pubspec: File(_joinPath(destination.path, 'pubspec.yaml')),
+          sourceDirectory: dependency.directory,
+          relativePrefix: '..',
+        ),
+      );
+    }
+
+    return vendored;
+  }
+
+  /// Rewrites every `path:` dependency of [pubspec] that points outside
+  /// [sourceDirectory] to `$relativePrefix/<package name>` and returns the
+  /// packages that have to be copied there.
+  Future<List<_PathDependency>> _rewritePathDependencies({
+    required File pubspec,
+    required Directory sourceDirectory,
+    required String relativePrefix,
+  }) async {
+    if (!pubspec.existsSync()) {
+      return [];
+    }
+
+    const dependencySections = {
+      'dependencies:',
+      'dev_dependencies:',
+      'dependency_overrides:',
+    };
+    final lines = (await pubspec.readAsString())
+        .replaceAll('\r\n', '\n')
+        .split('\n');
+    final rewritten = <String>[];
+    final dependencies = <_PathDependency>[];
+    var inDependencySection = false;
+    var dependencyKeyIndent = -1;
+    var dependencyName = '';
+    var gitIndent = -1;
+
+    for (final line in lines) {
+      final trimmed = line.trimLeft();
+      final indent = line.length - trimmed.length;
+
+      if (trimmed.isEmpty || trimmed.startsWith('#')) {
+        rewritten.add(line);
+        continue;
+      }
+      if (indent == 0) {
+        inDependencySection = dependencySections.contains(trimmed);
+        dependencyKeyIndent = -1;
+        dependencyName = '';
+        gitIndent = -1;
+        rewritten.add(line);
+        continue;
+      }
+      if (!inDependencySection) {
+        rewritten.add(line);
+        continue;
+      }
+
+      if (dependencyKeyIndent < 0) {
+        dependencyKeyIndent = indent;
+      }
+      if (indent <= dependencyKeyIndent) {
+        // A dependency name such as `sync_ui:`, or the package literally named
+        // `path` in `path: ^1.9.0` — never a path source.
+        dependencyName = trimmed.split(':').first.trim();
+        gitIndent = -1;
+        rewritten.add(line);
+        continue;
+      }
+      // A `path:` nested under `git:` names a directory inside the repository.
+      if (gitIndent >= 0 && indent <= gitIndent) {
+        gitIndent = -1;
+      }
+      if (trimmed == 'git:') {
+        gitIndent = indent;
+        rewritten.add(line);
+        continue;
+      }
+      if (gitIndent >= 0 || !trimmed.startsWith('path:')) {
+        rewritten.add(line);
+        continue;
+      }
+
+      final rawPath = _unquotePubspecValue(
+        trimmed.substring('path:'.length).trim(),
+      );
+      if (rawPath.isEmpty || dependencyName.isEmpty) {
+        rewritten.add(line);
+        continue;
+      }
+      final resolved = _resolvePath(sourceDirectory.path, rawPath);
+      if (_isInsideDirectory(path: resolved, directory: sourceDirectory.path)) {
+        // Already part of the copied tree, the relative path still holds.
+        rewritten.add(line);
+        continue;
+      }
+
+      dependencies.add(
+        _PathDependency(name: dependencyName, directory: Directory(resolved)),
+      );
+      rewritten.add('${' ' * indent}path: $relativePrefix/$dependencyName');
+    }
+
+    if (dependencies.isEmpty) {
+      return dependencies;
+    }
+    await pubspec.writeAsString(rewritten.join('\n'));
+    return dependencies;
+  }
+
+  String _unquotePubspecValue(String value) {
+    final withoutComment = value.startsWith('"') || value.startsWith("'")
+        ? value
+        : value.split('#').first;
+    final trimmed = withoutComment.trim();
+    if (trimmed.length >= 2 &&
+        (trimmed.startsWith('"') && trimmed.endsWith('"') ||
+            trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+      return trimmed.substring(1, trimmed.length - 1).trim();
+    }
+    return trimmed;
+  }
+
+  /// Resolves [target] against [base] and collapses `.` and `..` segments.
+  String _resolvePath(String base, String target) {
+    final normalizedTarget = target.replaceAll('\\', '/');
+    final isAbsolute =
+        normalizedTarget.startsWith('/') ||
+        RegExp(r'^[a-zA-Z]:/').hasMatch(normalizedTarget);
+    final combined = isAbsolute
+        ? normalizedTarget
+        : '${base.replaceAll('\\', '/')}/$normalizedTarget';
+
+    final hasRootPrefix = combined.startsWith('/');
+    final segments = <String>[];
+    for (final segment in combined.split('/')) {
+      if (segment.isEmpty || segment == '.') {
+        continue;
+      }
+      if (segment == '..' && segments.isNotEmpty && segments.last != '..') {
+        segments.removeLast();
+        continue;
+      }
+      segments.add(segment);
+    }
+
+    final resolved = segments.join(Platform.pathSeparator);
+    return hasRootPrefix ? '${Platform.pathSeparator}$resolved' : resolved;
+  }
+
+  bool _isInsideDirectory({required String path, required String directory}) {
+    final normalizedDirectory = directory.endsWith(Platform.pathSeparator)
+        ? directory
+        : '$directory${Platform.pathSeparator}';
+    return path.startsWith(normalizedDirectory);
   }
 
   Future<void> _copyProjectDirectory(
@@ -3247,10 +3467,25 @@ class _CleanupResult {
 }
 
 class _BuildWorkspace {
-  const _BuildWorkspace({required this.tempDirectory, required this.workspace});
+  const _BuildWorkspace({
+    required this.tempDirectory,
+    required this.workspace,
+    this.vendoredDependencies = const [],
+  });
 
   final Directory tempDirectory;
   final Directory workspace;
+
+  /// Local `path:` dependencies that were copied into the workspace, as
+  /// `<package name> <- <source directory>` lines for the build log.
+  final List<String> vendoredDependencies;
+}
+
+class _PathDependency {
+  const _PathDependency({required this.name, required this.directory});
+
+  final String name;
+  final Directory directory;
 }
 
 class BuildEvent {

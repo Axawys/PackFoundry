@@ -11,9 +11,11 @@ import '../../core/models/build_log_entry.dart';
 import '../../core/models/build_target.dart';
 import '../../core/models/chip_tone.dart';
 import '../../core/models/builder_environment.dart';
+import '../../core/models/config_preset.dart';
 import '../../core/models/package_inspection.dart';
 import '../../core/models/project_config.dart';
 import '../../core/models/tool_status.dart';
+import '../../core/services/android_device_service.dart';
 import '../../core/services/app_preferences.dart';
 import '../../core/services/build_service.dart';
 import '../../core/services/builder_environment_service.dart';
@@ -23,6 +25,7 @@ import '../../core/services/toolchain_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../widgets/app_settings_panel.dart';
 import '../widgets/build_panel.dart';
+import '../widgets/config_presets_panel.dart';
 import '../widgets/preferences_panel.dart';
 import '../widgets/project_panel.dart';
 import '../widgets/installer_settings_panel.dart';
@@ -65,8 +68,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   final _builderService = BuilderEnvironmentService();
   final _packageInspectorService = const PackageInspectorService();
   final _projectConfigService = const ProjectConfigService();
+  final _androidDeviceService = AndroidDeviceService();
   final _appPreferences = AppPreferences();
   final _appNameController = TextEditingController(text: _defaultAppName);
+  final _projectPathController = TextEditingController();
   final _releaseTagController = TextEditingController();
   final _developerEmailController = TextEditingController();
   final _publisherNameController = TextEditingController();
@@ -82,15 +87,27 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   final _buildLog = <BuildLogEntry>[];
   final _roadmapSteps = <BuildRoadmapStep>[];
   final _projectChecks = <ProjectCheck>[];
+  final _configPresets = <ConfigPreset>[];
   Timer? _metadataSaveTimer;
   bool _metadataListenersAttached = false;
 
   String? _projectPath;
+  String? _activeConfigPath;
   String? _iconPath;
   String? _outputPath;
   PackageInspection? _packageInspection;
   bool _isBuilding = false;
   bool _isRunningProject = false;
+  /// Whether the selected project has a desktop runner. Without one there is
+  /// nothing `flutter run` could launch, so the run action stays hidden.
+  bool _hasDesktopRunner = false;
+  bool _isSendingToDevice = false;
+
+  /// Short progress line shown next to the send action, because its technical
+  /// log lives on another workspace tab.
+  String? _sendToDeviceStatus;
+  Process? _sendToDeviceProcess;
+  bool _sendToDeviceCancelled = false;
   bool _isInspectingPackage = false;
   ToolchainInstallTarget? _installingToolTarget;
   int _buildProgress = 0;
@@ -156,6 +173,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     );
     _workspaceTabController.addListener(_handleWorkspaceTabChanged);
     _loadReleaseMetadata();
+    _loadConfigPresets();
     if (widget.enableToolchainDiagnostics) {
       _refreshToolchainStatus();
     }
@@ -1241,6 +1259,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     _workspaceTabController.removeListener(_handleWorkspaceTabChanged);
     _workspaceTabController.dispose();
     _runningProjectProcess?.kill(ProcessSignal.sigterm);
+    _sendToDeviceProcess?.kill(ProcessSignal.sigterm);
     if (_metadataListenersAttached) {
       for (final controller in _metadataControllers) {
         controller.removeListener(_scheduleReleaseMetadataSave);
@@ -1251,6 +1270,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     }
     _metadataSaveTimer?.cancel();
     _appNameController.dispose();
+    _projectPathController.dispose();
     _releaseTagController.dispose();
     _developerEmailController.dispose();
     _publisherNameController.dispose();
@@ -1267,7 +1287,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   }
 
   Future<void> _runBuild() async {
-    if (_isBuilding) {
+    if (_isBuilding || _isSendingToDevice) {
       return;
     }
 
@@ -1310,6 +1330,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     var hadWarning = false;
     var sawSuccess = false;
     var shouldShowSuccess = false;
+    String? firstWarningDetail;
     try {
       await for (final event in _buildService.build(configuration)) {
         if (!mounted) {
@@ -1323,7 +1344,12 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
           final roadmapUpdate = event.roadmapUpdate;
           if (logEntry != null) {
             _buildLog.add(logEntry);
-            hadWarning = hadWarning || logEntry.state == BuildLogState.warning;
+            if (logEntry.state == BuildLogState.warning) {
+              hadWarning = true;
+              firstWarningDetail ??= logEntry.detail.trim().isEmpty
+                  ? logEntry.title
+                  : logEntry.detail;
+            }
             sawSuccess = sawSuccess || logEntry.state == BuildLogState.success;
           }
           if (progress != null) {
@@ -1340,22 +1366,44 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
         });
       }
       shouldShowSuccess = sawSuccess && !hadWarning;
+    } on Object catch (error) {
+      // Without this the stream error stayed invisible: the roadmap was reset
+      // and the build simply ended without saying anything.
+      hadWarning = true;
+      firstWarningDetail ??= error.toString();
+      if (mounted) {
+        setState(() {
+          _buildLog.add(
+            BuildLogEntry(
+              title: context.l10n.buildWarningsTitle,
+              detail: error.toString(),
+              state: BuildLogState.warning,
+            ),
+          );
+        });
+      }
     } finally {
       if (mounted) {
         setState(() {
           _isBuilding = false;
           _buildProgress = 0;
-          _replaceRoadmapWithPreview();
+          if (!hadWarning) {
+            // On failure the roadmap stays as it is, so the step that broke
+            // remains on screen instead of being replaced by a clean preview.
+            _replaceRoadmapWithPreview();
+          }
         });
         if (shouldShowSuccess) {
           await _showBuildSuccessDialog();
+        } else if (hadWarning) {
+          await _showBuildWarningsDialog(firstWarningDetail);
         }
       }
     }
   }
 
   Future<void> _runProjectWithoutBuild() async {
-    if (_isBuilding || _isRunningProject) {
+    if (_isBuilding || _isRunningProject || _isSendingToDevice) {
       return;
     }
 
@@ -1491,6 +1539,467 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     });
   }
 
+  /// Builds a release APK straight from the project folder and installs it on
+  /// an attached device. The packaging pipeline is deliberately not reused: it
+  /// copies the project into a throwaway workspace, which would force a cold
+  /// Gradle build on every send.
+  Future<void> _sendApkToDevice() async {
+    if (_isBuilding || _isRunningProject || _isSendingToDevice) {
+      return;
+    }
+
+    final projectPath = _projectPath;
+    if (projectPath == null) {
+      _replaceLog(
+        BuildLogEntry(
+          title: context.l10n.projectNotSelectedTitle,
+          detail: context.l10n.projectNotSelectedDetail,
+          state: BuildLogState.warning,
+        ),
+      );
+      return;
+    }
+
+    if (await _androidDeviceService.resolveExecutable() == null) {
+      if (mounted) {
+        _showSnackBar(context.l10n.adbMissing);
+      }
+      return;
+    }
+
+    final device = await _resolveTargetDevice();
+    if (device == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _isSendingToDevice = true;
+      _sendToDeviceCancelled = false;
+      _sendToDeviceStatus = context.l10n.androidBuildingApk;
+      _buildLog
+        ..clear()
+        ..add(
+          BuildLogEntry(
+            title: 'Building release APK',
+            detail: 'flutter build apk --release (${device.label})',
+            state: BuildLogState.running,
+          ),
+        );
+    });
+
+    try {
+      final buildExitCode = await _runSendStep(
+        await _startFlutterApkBuild(projectPath),
+      );
+      if (!mounted || _sendToDeviceCancelled) {
+        return;
+      }
+      if (buildExitCode != 0) {
+        _finishSendToDevice(context.l10n.androidBuildFailed, failed: true);
+        return;
+      }
+
+      final apk = _findReleaseApk(projectPath);
+      if (apk == null) {
+        _finishSendToDevice(context.l10n.androidApkMissing, failed: true);
+        return;
+      }
+
+      setState(() {
+        _sendToDeviceStatus = context.l10n.androidInstallingApk(device.label);
+        _buildLog.add(
+          BuildLogEntry(
+            title: 'Installing APK',
+            detail: 'adb -s ${device.serial} install -r ${apk.path}',
+            state: BuildLogState.running,
+          ),
+        );
+      });
+
+      final installed = await _installApkOnDevice(
+        device: device,
+        apkPath: apk.path,
+        projectPath: projectPath,
+      );
+      if (!mounted || _sendToDeviceCancelled) {
+        return;
+      }
+      if (!installed) {
+        _finishSendToDevice(context.l10n.androidInstallFailed, failed: true);
+        return;
+      }
+
+      await _launchInstalledApp(device: device, projectPath: projectPath);
+      if (!mounted || _sendToDeviceCancelled) {
+        return;
+      }
+      _finishSendToDevice(context.l10n.androidInstallSucceeded(device.label));
+    } on Object catch (error) {
+      if (!mounted || _sendToDeviceCancelled) {
+        return;
+      }
+      setState(() {
+        _buildLog.add(
+          BuildLogEntry(
+            title: 'Could not send the app to the device',
+            detail: error.toString(),
+            state: BuildLogState.warning,
+          ),
+        );
+      });
+      _finishSendToDevice(context.l10n.androidInstallFailed, failed: true);
+    }
+  }
+
+  /// Picks the device to install on, walking the user through the states adb
+  /// reports: nothing attached, attached but waiting for the USB debugging
+  /// confirmation, or several devices to choose from.
+  Future<AndroidDevice?> _resolveTargetDevice() async {
+    while (mounted) {
+      final devices = await _androidDeviceService.listDevices();
+      if (!mounted) {
+        return null;
+      }
+
+      final authorized = devices.where((device) => device.isAuthorized).toList();
+      if (authorized.length == 1) {
+        return authorized.first;
+      }
+      if (authorized.length > 1) {
+        return _chooseAndroidDevice(authorized);
+      }
+
+      AndroidDevice? unauthorized;
+      for (final device in devices) {
+        if (device.isUnauthorized) {
+          unauthorized = device;
+          break;
+        }
+      }
+
+      final retry = unauthorized == null
+          ? await _showDeviceProblemDialog(
+              title: context.l10n.androidDeviceSearchTitle,
+              message: context.l10n.androidDeviceMissingMessage,
+              icon: Icons.usb_outlined,
+            )
+          : await _showDeviceProblemDialog(
+              title: context.l10n.androidDeviceUnauthorizedTitle,
+              message: context.l10n.androidDeviceUnauthorizedMessage(
+                unauthorized.label,
+              ),
+              icon: Icons.phonelink_lock_outlined,
+            );
+      if (!retry) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  Future<bool> _showDeviceProblemDialog({
+    required String title,
+    required String message,
+    required IconData icon,
+  }) async {
+    final l10n = context.l10n;
+    final retry = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: Icon(icon),
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(l10n.retryDeviceCheck),
+          ),
+        ],
+      ),
+    );
+    return retry ?? false;
+  }
+
+  Future<AndroidDevice?> _chooseAndroidDevice(
+    List<AndroidDevice> devices,
+  ) async {
+    final l10n = context.l10n;
+    return showDialog<AndroidDevice>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.smartphone_outlined),
+        title: Text(l10n.chooseAndroidDeviceTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final device in devices)
+              ListTile(
+                leading: const Icon(Icons.smartphone_outlined),
+                title: Text(device.label),
+                onTap: () => Navigator.of(context).pop(device),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(l10n.cancel),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Installs the APK, recovering from the two failures that a device with an
+  /// older build of the same app reliably produces.
+  Future<bool> _installApkOnDevice({
+    required AndroidDevice device,
+    required String apkPath,
+    required String projectPath,
+  }) async {
+    var result = await _runAdbInstall(device.serial, apkPath);
+    if (result.isSuccess) {
+      return true;
+    }
+
+    // A lower versionCode than the installed build: the APK is still the newer
+    // source, so retrying with an explicit downgrade is what the user wants.
+    if (result.contains('INSTALL_FAILED_VERSION_DOWNGRADE')) {
+      _logAdbResult('Retrying install with downgrade allowed', result);
+      result = await _runAdbInstall(device.serial, apkPath, allowDowngrade: true);
+      if (result.isSuccess) {
+        return true;
+      }
+    }
+
+    // A build signed with another key cannot replace the installed one, and
+    // removing it destroys the app data, so this needs an explicit decision.
+    final signatureConflict =
+        result.contains('INSTALL_FAILED_UPDATE_INCOMPATIBLE') ||
+        result.contains('signatures do not match');
+    if (signatureConflict) {
+      _logAdbResult('Install rejected: signature mismatch', result);
+      final applicationId = _readAndroidApplicationId(projectPath);
+      if (applicationId != null && await _confirmReinstall()) {
+        final uninstall = await _androidDeviceService.run([
+          '-s',
+          device.serial,
+          'uninstall',
+          applicationId,
+        ]);
+        _logAdbResult('Uninstalling the previous build', uninstall);
+        result = await _runAdbInstall(device.serial, apkPath);
+        if (result.isSuccess) {
+          return true;
+        }
+      }
+    }
+
+    _logAdbResult('Install failed', result);
+    return false;
+  }
+
+  Future<AdbResult> _runAdbInstall(
+    String serial,
+    String apkPath, {
+    bool allowDowngrade = false,
+  }) {
+    return _androidDeviceService.run([
+      '-s',
+      serial,
+      'install',
+      '-r',
+      if (allowDowngrade) '-d',
+      apkPath,
+    ], timeout: const Duration(minutes: 10));
+  }
+
+  Future<bool> _confirmReinstall() async {
+    final l10n = context.l10n;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.warning_amber_outlined),
+        title: Text(l10n.androidSignatureConflictTitle),
+        content: Text(l10n.androidSignatureConflictMessage),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(l10n.removeAndInstall),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
+  /// Opens the freshly installed app. A device that refuses to launch it is not
+  /// an install failure, so this only ever adds a log entry.
+  Future<void> _launchInstalledApp({
+    required AndroidDevice device,
+    required String projectPath,
+  }) async {
+    final applicationId = _readAndroidApplicationId(projectPath);
+    if (applicationId == null) {
+      return;
+    }
+    final result = await _androidDeviceService.run([
+      '-s',
+      device.serial,
+      'shell',
+      'monkey',
+      '-p',
+      applicationId,
+      '-c',
+      'android.intent.category.LAUNCHER',
+      '1',
+    ], timeout: const Duration(seconds: 30));
+    _logAdbResult('Launching $applicationId', result);
+  }
+
+  /// Reads `applicationId` from the Gradle config of the Android project. Only
+  /// a literal value is accepted, so a computed id is skipped instead of being
+  /// guessed wrong.
+  String? _readAndroidApplicationId(String projectPath) {
+    for (final relativePath in const [
+      'android/app/build.gradle.kts',
+      'android/app/build.gradle',
+    ]) {
+      final file = File(_joinPath(projectPath, relativePath));
+      if (!file.existsSync()) {
+        continue;
+      }
+      final match = RegExp(
+        '''applicationId\\s*=?\\s*["']([^"']+)["']''',
+      ).firstMatch(file.readAsStringSync());
+      final applicationId = match?.group(1);
+      if (applicationId != null && applicationId.isNotEmpty) {
+        return applicationId;
+      }
+    }
+    return null;
+  }
+
+  Future<Process> _startFlutterApkBuild(String projectPath) async {
+    ProcessException? lastError;
+    for (final executable in _flutterExecutableCandidates()) {
+      try {
+        return await Process.start(
+          executable,
+          ['build', 'apk', '--release'],
+          workingDirectory: projectPath,
+          runInShell: true,
+          environment: _runEnvironment(),
+        );
+      } on ProcessException catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError ??
+        const ProcessException('flutter', [
+          'build',
+          'apk',
+          '--release',
+        ], 'Flutter executable was not found.');
+  }
+
+  Future<int> _runSendStep(Process process) async {
+    _sendToDeviceProcess = process;
+    _listenToRunOutput(process.stdout, BuildLogState.running);
+    _listenToRunOutput(process.stderr, BuildLogState.warning);
+    return process.exitCode;
+  }
+
+  File? _findReleaseApk(String projectPath) {
+    final standardApk = File(
+      _joinPath(projectPath, 'build/app/outputs/flutter-apk/app-release.apk'),
+    );
+    if (standardApk.existsSync()) {
+      return standardApk;
+    }
+
+    final outputDirectory = Directory(
+      _joinPath(projectPath, 'build/app/outputs'),
+    );
+    if (!outputDirectory.existsSync()) {
+      return null;
+    }
+    for (final entity in outputDirectory.listSync(recursive: true)) {
+      if (entity is File &&
+          entity.path.endsWith('.apk') &&
+          entity.path.contains('release')) {
+        return entity;
+      }
+    }
+    return null;
+  }
+
+  void _logAdbResult(String title, AdbResult result) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _buildLog.add(
+        BuildLogEntry(
+          title: title,
+          detail: result.output.isEmpty
+              ? 'adb exited with code ${result.exitCode}.'
+              : result.output,
+          state: result.isSuccess
+              ? BuildLogState.success
+              : BuildLogState.warning,
+        ),
+      );
+    });
+  }
+
+  void _finishSendToDevice(String message, {bool failed = false}) {
+    setState(() {
+      _isSendingToDevice = false;
+      _sendToDeviceProcess = null;
+      _sendToDeviceStatus = null;
+      _buildLog.add(
+        BuildLogEntry(
+          title: failed ? 'Send to device failed' : 'Send to device finished',
+          detail: message,
+          state: failed ? BuildLogState.warning : BuildLogState.success,
+        ),
+      );
+    });
+    _showSnackBar(message);
+  }
+
+  void _cancelSendToDevice() {
+    if (!_isSendingToDevice) {
+      return;
+    }
+    // An adb step cannot be interrupted mid-flight, so the flag is what stops
+    // the flow: its result is dropped instead of being reported as a failure.
+    _sendToDeviceCancelled = true;
+    _sendToDeviceProcess?.kill(ProcessSignal.sigterm);
+    _sendToDeviceProcess = null;
+    setState(() {
+      _isSendingToDevice = false;
+      _sendToDeviceStatus = null;
+      _buildLog.add(
+        BuildLogEntry(
+          title: 'Send to device cancelled',
+          detail: context.l10n.androidSendCancelled,
+          state: BuildLogState.warning,
+        ),
+      );
+    });
+  }
+
   List<String> _flutterExecutableCandidates() {
     final managedFlutter = _managedFlutterExecutable();
     return ['flutter', if (managedFlutter.existsSync()) managedFlutter.path];
@@ -1570,6 +2079,50 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     _setProjectPath(path);
   }
 
+  /// Applies the path typed into the project field. An unknown folder is
+  /// reported instead of being applied, so the checks never describe a folder
+  /// that is not there.
+  void _applyTypedProjectPath() {
+    final path = _expandHomeDirectory(_projectPathController.text.trim());
+    if (path == _projectPath) {
+      if (_projectPathController.text != path) {
+        _projectPathController.text = path ?? '';
+      }
+      return;
+    }
+
+    if (path == null) {
+      setState(() {
+        _projectPath = null;
+        _hasDesktopRunner = false;
+        _projectChecks.clear();
+        _projectPathController.clear();
+      });
+      return;
+    }
+
+    if (!Directory(path).existsSync()) {
+      _showSnackBar(context.l10n.projectFolderNotFound(path));
+      return;
+    }
+
+    _setProjectPath(path);
+  }
+
+  String? _expandHomeDirectory(String path) {
+    if (path.isEmpty) {
+      return null;
+    }
+    final home = Platform.environment['HOME'];
+    if (home == null || home.isEmpty || !path.startsWith('~')) {
+      return path;
+    }
+    if (path == '~') {
+      return home;
+    }
+    return path.startsWith('~/') ? _joinPath(home, path.substring(2)) : path;
+  }
+
   void _setProjectPath(String path) {
     final windowSize = _readFlutterWindowSize(path);
     final projectMetadata = _readProjectMetadata(path);
@@ -1577,6 +2130,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
 
     setState(() {
       _projectPath = path;
+      _hasDesktopRunner = _hasLinuxRunner(path);
+      if (_projectPathController.text != path) {
+        _projectPathController.text = path;
+      }
       _projectChecks
         ..clear()
         ..addAll(_buildProjectChecks(path, projectMetadata));
@@ -1602,7 +2159,52 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     });
   }
 
-  Future<void> _importProjectConfig() async {
+  Future<void> _loadConfigPresets() async {
+    await _refreshConfigPresets(await _appPreferences.loadConfigPresetPaths());
+  }
+
+  /// Rereads every pinned config. Entries whose file no longer exists are
+  /// dropped: a preset lives exactly as long as its file on disk.
+  Future<void> _refreshConfigPresets(List<String> paths) async {
+    final presets = <ConfigPreset>[];
+    final keptPaths = <String>[];
+    for (final path in paths) {
+      if (!await File(path).exists()) {
+        continue;
+      }
+      keptPaths.add(path);
+      presets.add(await _readConfigPreset(path));
+    }
+
+    if (keptPaths.length != paths.length) {
+      await _appPreferences.saveConfigPresetPaths(keptPaths);
+    }
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _configPresets
+        ..clear()
+        ..addAll(presets);
+      if (!keptPaths.contains(_activeConfigPath)) {
+        _activeConfigPath = null;
+      }
+    });
+  }
+
+  Future<ConfigPreset> _readConfigPreset(String path) async {
+    try {
+      return ConfigPreset.fromConfig(
+        path,
+        await _projectConfigService.load(path),
+      );
+    } on Object {
+      return ConfigPreset.broken(path);
+    }
+  }
+
+  Future<void> _addConfigPreset() async {
     if (_isBuilding) {
       return;
     }
@@ -1611,25 +2213,69 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       acceptedTypeGroups: [
         XTypeGroup(label: context.l10n.configFileType, extensions: ['json']),
       ],
-      confirmButtonText: context.l10n.importConfig,
+      confirmButtonText: context.l10n.addConfig,
     );
     if (file == null || !mounted) {
       return;
     }
 
+    final alreadyPinned = _configPresets.any(
+      (preset) => preset.path == file.path,
+    );
+    await _pinConfigPath(file.path);
+    if (!mounted) {
+      return;
+    }
+    if (alreadyPinned) {
+      _showSnackBar(context.l10n.configPresetAlreadyPinned);
+    }
+    await _applyConfigPreset(file.path);
+  }
+
+  Future<void> _pinConfigPath(String path) async {
+    final paths = List<String>.from(
+      await _appPreferences.loadConfigPresetPaths(),
+    );
+    if (!paths.contains(path)) {
+      paths.add(path);
+      await _appPreferences.saveConfigPresetPaths(paths);
+    }
+    await _refreshConfigPresets(paths);
+  }
+
+  Future<void> _applyConfigPreset(String path) async {
+    if (_isBuilding) {
+      return;
+    }
+
     try {
-      final config = await _projectConfigService.load(file.path);
+      final config = await _projectConfigService.load(path);
       if (!mounted) {
         return;
       }
       _applyProjectConfig(config);
-      _showSnackBar(context.l10n.configImported);
+      setState(() {
+        _activeConfigPath = path;
+      });
     } on Object catch (error) {
       if (!mounted) {
         return;
       }
       _showSnackBar(context.l10n.configImportFailed(error.toString()));
+      await _loadConfigPresets();
     }
+  }
+
+  Future<void> _removeConfigPreset(ConfigPreset preset) async {
+    final paths = List<String>.from(
+      await _appPreferences.loadConfigPresetPaths(),
+    )..remove(preset.path);
+    await _appPreferences.saveConfigPresetPaths(paths);
+    await _refreshConfigPresets(paths);
+    if (!mounted) {
+      return;
+    }
+    _showSnackBar(context.l10n.configPresetRemoved);
   }
 
   Future<void> _exportProjectConfig() async {
@@ -1652,9 +2298,13 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
 
     try {
       await _projectConfigService.save(location.path, _currentProjectConfig());
+      await _pinConfigPath(location.path);
       if (!mounted) {
         return;
       }
+      setState(() {
+        _activeConfigPath = location.path;
+      });
       _showSnackBar(context.l10n.configExported);
     } on Object catch (error) {
       if (!mounted) {
@@ -1783,6 +2433,45 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     );
   }
 
+  Future<void> _showBuildWarningsDialog(String? detail) async {
+    await SystemSound.play(SystemSoundType.alert);
+    if (!mounted) {
+      return;
+    }
+
+    final l10n = context.l10n;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.error_outline),
+        title: Text(l10n.buildWarningsTitle),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(l10n.buildWarningsMessage),
+              if (detail != null && detail.trim().isNotEmpty) ...[
+                const SizedBox(height: 12),
+                SelectableText(
+                  detail.trim(),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(l10n.ok),
+          ),
+        ],
+      ),
+    );
+  }
+
   bool get _shouldAutofillAppName {
     final currentName = _appNameController.text.trim();
     return currentName.isEmpty || currentName == _defaultAppName;
@@ -1829,6 +2518,14 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     return value;
   }
 
+  /// The run action launches `flutter run -d linux`, so only the Linux runner
+  /// makes a project runnable from this host.
+  bool _hasLinuxRunner(String projectPath) {
+    return File(
+      _joinPath(projectPath, 'linux/runner/my_application.cc'),
+    ).existsSync();
+  }
+
   List<ProjectCheck> _buildProjectChecks(
     String projectPath,
     _ProjectMetadata metadata,
@@ -1837,9 +2534,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     final hasPubspec = File(
       _joinPath(projectPath, 'pubspec.yaml'),
     ).existsSync();
-    final hasLinuxRunner = File(
-      _joinPath(projectPath, 'linux/runner/my_application.cc'),
-    ).existsSync();
+    final hasLinuxRunner = _hasLinuxRunner(projectPath);
     final hasWindowsRunner = File(
       _joinPath(projectPath, 'windows/runner/main.cpp'),
     ).existsSync();
@@ -1856,8 +2551,6 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
         ProjectCheck(label: l10n.linuxRunnerFound, tone: ChipTone.good),
       if (hasWindowsRunner)
         ProjectCheck(label: l10n.windowsRunnerFound, tone: ChipTone.good),
-      if (!hasLinuxRunner && !hasWindowsRunner)
-        ProjectCheck(label: l10n.desktopRunnersMissing, tone: ChipTone.warning),
       ProjectCheck(
         label: hasVersion
             ? l10n.projectVersionFound
@@ -2104,7 +2797,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       toolGroups: toolGroups,
       installingToolTarget: _installingToolTarget,
       projectPath: _projectPath,
+      projectPathController: _projectPathController,
       projectChecks: _projectChecks,
+      configPresets: _configPresets,
+      activeConfigPath: _activeConfigPath,
       iconPath: _iconPath,
       outputPath: _outputPath,
       appNameController: _appNameController,
@@ -2116,10 +2812,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       descriptionController: _descriptionController,
       widthController: _widthController,
       heightController: _heightController,
-      debAdditionalDependenciesController:
-          _debAdditionalDependenciesController,
-      rpmAdditionalDependenciesController:
-          _rpmAdditionalDependenciesController,
+      debAdditionalDependenciesController: _debAdditionalDependenciesController,
+      rpmAdditionalDependenciesController: _rpmAdditionalDependenciesController,
       packageInspection: _packageInspection,
       packageMetadataController: _packageMetadataController,
       packageDependenciesController: _packageDependenciesController,
@@ -2128,6 +2822,14 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       selectedTargets: selectedTargets,
       isBuilding: _isBuilding,
       isRunningProject: _isRunningProject,
+      canRunProject: _projectPath != null && _hasDesktopRunner,
+      canSendToDevice:
+          _projectPath != null &&
+          _targets.any(
+            (target) => target.artifact == 'APK' && target.selected,
+          ),
+      isSendingToDevice: _isSendingToDevice,
+      sendToDeviceStatus: _sendToDeviceStatus,
       progress: _buildProgress,
       roadmapSteps: _roadmapSteps,
       log: _buildLog,
@@ -2137,8 +2839,11 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       onRemoveTools: _removeTools,
       onCancelInstall: _cancelToolInstall,
       onChooseProject: _chooseProjectFolder,
-      onImportConfig: _importProjectConfig,
-      onExportConfig: _exportProjectConfig,
+      onProjectPathSubmitted: _applyTypedProjectPath,
+      onAddConfigPreset: _addConfigPreset,
+      onSaveCurrentConfig: _exportProjectConfig,
+      onApplyConfigPreset: (preset) => _applyConfigPreset(preset.path),
+      onRemoveConfigPreset: _removeConfigPreset,
       onChooseIcon: _chooseIconFile,
       onChooseOutput: _chooseOutputFolder,
       onChoosePackage: _choosePackageFile,
@@ -2147,6 +2852,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       onBuild: _runBuild,
       onRunProject: _runProjectWithoutBuild,
       onStopProject: _stopRunningProject,
+      onSendToDevice: _sendApkToDevice,
+      onCancelSendToDevice: _cancelSendToDevice,
     );
 
     return Scaffold(
@@ -2247,7 +2954,10 @@ class _WorkspaceContent extends StatelessWidget {
     required this.toolGroups,
     required this.installingToolTarget,
     required this.projectPath,
+    required this.projectPathController,
     required this.projectChecks,
+    required this.configPresets,
+    required this.activeConfigPath,
     required this.iconPath,
     required this.outputPath,
     required this.appNameController,
@@ -2269,6 +2979,10 @@ class _WorkspaceContent extends StatelessWidget {
     required this.selectedTargets,
     required this.isBuilding,
     required this.isRunningProject,
+    required this.canRunProject,
+    required this.canSendToDevice,
+    required this.isSendingToDevice,
+    required this.sendToDeviceStatus,
     required this.progress,
     required this.roadmapSteps,
     required this.log,
@@ -2278,8 +2992,11 @@ class _WorkspaceContent extends StatelessWidget {
     required this.onRemoveTools,
     required this.onCancelInstall,
     required this.onChooseProject,
-    required this.onImportConfig,
-    required this.onExportConfig,
+    required this.onProjectPathSubmitted,
+    required this.onAddConfigPreset,
+    required this.onSaveCurrentConfig,
+    required this.onApplyConfigPreset,
+    required this.onRemoveConfigPreset,
     required this.onChooseIcon,
     required this.onChooseOutput,
     required this.onChoosePackage,
@@ -2288,6 +3005,8 @@ class _WorkspaceContent extends StatelessWidget {
     required this.onBuild,
     required this.onRunProject,
     required this.onStopProject,
+    required this.onSendToDevice,
+    required this.onCancelSendToDevice,
   });
 
   final int index;
@@ -2296,7 +3015,10 @@ class _WorkspaceContent extends StatelessWidget {
   final List<ToolchainGroup> toolGroups;
   final ToolchainInstallTarget? installingToolTarget;
   final String? projectPath;
+  final TextEditingController projectPathController;
   final List<ProjectCheck> projectChecks;
+  final List<ConfigPreset> configPresets;
+  final String? activeConfigPath;
   final String? iconPath;
   final String? outputPath;
   final TextEditingController appNameController;
@@ -2318,6 +3040,10 @@ class _WorkspaceContent extends StatelessWidget {
   final int selectedTargets;
   final bool isBuilding;
   final bool isRunningProject;
+  final bool canRunProject;
+  final bool canSendToDevice;
+  final bool isSendingToDevice;
+  final String? sendToDeviceStatus;
   final int progress;
   final List<BuildRoadmapStep> roadmapSteps;
   final List<BuildLogEntry> log;
@@ -2327,8 +3053,11 @@ class _WorkspaceContent extends StatelessWidget {
   final ValueChanged<ToolchainInstallTarget> onRemoveTools;
   final VoidCallback onCancelInstall;
   final VoidCallback onChooseProject;
-  final VoidCallback onImportConfig;
-  final VoidCallback onExportConfig;
+  final VoidCallback onProjectPathSubmitted;
+  final VoidCallback onAddConfigPreset;
+  final VoidCallback onSaveCurrentConfig;
+  final ValueChanged<ConfigPreset> onApplyConfigPreset;
+  final ValueChanged<ConfigPreset> onRemoveConfigPreset;
   final VoidCallback onChooseIcon;
   final VoidCallback onChooseOutput;
   final VoidCallback onChoosePackage;
@@ -2337,6 +3066,8 @@ class _WorkspaceContent extends StatelessWidget {
   final VoidCallback onBuild;
   final VoidCallback onRunProject;
   final VoidCallback onStopProject;
+  final VoidCallback onSendToDevice;
+  final VoidCallback onCancelSendToDevice;
 
   @override
   Widget build(BuildContext context) {
@@ -2359,11 +3090,29 @@ class _WorkspaceContent extends StatelessWidget {
       ],
       1 => [
         ProjectPanel(
-          projectPath: projectPath,
+          pathController: projectPathController,
           checks: projectChecks,
           onChooseProject: onChooseProject,
-          onImportConfig: onImportConfig,
-          onExportConfig: onExportConfig,
+          onPathSubmitted: onProjectPathSubmitted,
+        ),
+        const SizedBox(height: 16),
+        ConfigPresetsPanel(
+          presets: configPresets,
+          activePath: activeConfigPath,
+          isBusy: isBuilding,
+          isRunning: isRunningProject,
+          canRun: canRunProject,
+          canSendToDevice: canSendToDevice,
+          isSendingToDevice: isSendingToDevice,
+          sendToDeviceStatus: sendToDeviceStatus,
+          onAddConfig: onAddConfigPreset,
+          onSaveCurrentConfig: onSaveCurrentConfig,
+          onApplyPreset: onApplyConfigPreset,
+          onRemovePreset: onRemoveConfigPreset,
+          onRun: onRunProject,
+          onStop: onStopProject,
+          onSendToDevice: onSendToDevice,
+          onCancelSendToDevice: onCancelSendToDevice,
         ),
         const SizedBox(height: 16),
         AppSettingsPanel(
@@ -2397,6 +3146,7 @@ class _WorkspaceContent extends StatelessWidget {
           selectedTargets: selectedTargets,
           isBuilding: isBuilding,
           isRunning: isRunningProject,
+          canRun: canRunProject,
           progress: progress,
           roadmapSteps: roadmapSteps,
           log: log,

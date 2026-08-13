@@ -17,6 +17,7 @@ class BuildPanel extends StatefulWidget {
     required this.log,
     required this.onBuild,
     required this.isRunning,
+    required this.canRun,
     required this.onRun,
     required this.onStop,
     this.configuration,
@@ -30,6 +31,7 @@ class BuildPanel extends StatefulWidget {
   final List<BuildLogEntry> log;
   final VoidCallback onBuild;
   final bool isRunning;
+  final bool canRun;
   final VoidCallback onRun;
   final VoidCallback onStop;
   final BuildConfiguration? configuration;
@@ -44,12 +46,15 @@ enum _VisualRoadmapMode { full, simplified }
 
 class _BuildPanelState extends State<BuildPanel> {
   _BuildDisplayMode _displayMode = _BuildDisplayMode.visual;
-  _VisualRoadmapMode _visualMode = _VisualRoadmapMode.full;
+  _VisualRoadmapMode _visualMode = _VisualRoadmapMode.simplified;
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final remainingSeconds = _estimatedRemainingSeconds(widget.roadmapSteps);
+    final hasWarning = widget.log.any(
+      (entry) => entry.state == BuildLogState.warning,
+    );
 
     return Section(
       title: l10n.build,
@@ -57,6 +62,60 @@ class _BuildPanelState extends State<BuildPanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed:
+                      widget.isBuilding ||
+                          widget.isRunning ||
+                          widget.selectedTargets == 0
+                      ? null
+                      : widget.onBuild,
+                  icon: Icon(
+                    widget.isBuilding
+                        ? Icons.hourglass_top_outlined
+                        : Icons.rocket_launch_outlined,
+                  ),
+                  label: Text(
+                    widget.isBuilding ? l10n.building : l10n.buildInstallers,
+                  ),
+                ),
+                if (widget.canRun)
+                  OutlinedButton.icon(
+                    onPressed: widget.isBuilding
+                        ? null
+                        : widget.isRunning
+                        ? widget.onStop
+                        : widget.onRun,
+                    icon: Icon(
+                      widget.isRunning
+                          ? Icons.stop_circle_outlined
+                          : Icons.play_arrow_outlined,
+                    ),
+                    label: Text(
+                      widget.isRunning
+                          ? l10n.stopRunningApp
+                          : l10n.runWithoutBuild,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (widget.isRunning) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: _BuildStatusChip(
+                icon: Icons.play_circle_outline,
+                label: l10n.runningApp,
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
           Wrap(
             spacing: 10,
             runSpacing: 8,
@@ -133,56 +192,6 @@ class _BuildPanelState extends State<BuildPanel> {
                   ),
               ],
             ),
-            const SizedBox(height: 12),
-          ],
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Wrap(
-              spacing: 10,
-              runSpacing: 8,
-              children: [
-                FilledButton.icon(
-                  onPressed:
-                      widget.isBuilding ||
-                          widget.isRunning ||
-                          widget.selectedTargets == 0
-                      ? null
-                      : widget.onBuild,
-                  icon: Icon(
-                    widget.isBuilding
-                        ? Icons.hourglass_top_outlined
-                        : Icons.rocket_launch_outlined,
-                  ),
-                  label: Text(
-                    widget.isBuilding ? l10n.building : l10n.buildInstallers,
-                  ),
-                ),
-                OutlinedButton.icon(
-                  onPressed: widget.isBuilding || widget.configuration == null
-                      ? null
-                      : widget.isRunning
-                      ? widget.onStop
-                      : widget.onRun,
-                  icon: Icon(
-                    widget.isRunning
-                        ? Icons.stop_circle_outlined
-                        : Icons.play_arrow_outlined,
-                  ),
-                  label: Text(
-                    widget.isRunning
-                        ? l10n.stopRunningApp
-                        : l10n.runWithoutBuild,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (widget.isRunning) ...[
-            const SizedBox(height: 8),
-            _BuildStatusChip(
-              icon: Icons.play_circle_outline,
-              label: l10n.runningApp,
-            ),
           ],
           if (widget.roadmapSteps.isNotEmpty) ...[
             const SizedBox(height: 16),
@@ -205,9 +214,12 @@ class _BuildPanelState extends State<BuildPanel> {
           if (widget.log.isNotEmpty) ...[
             const SizedBox(height: 16),
             ExpansionTile(
+              // Re-keyed on the warning flag so the tile is rebuilt expanded as
+              // soon as a step fails: a collapsed log hid every build error.
+              key: ValueKey(hasWarning),
               tilePadding: EdgeInsets.zero,
               title: Text(l10n.technicalLog),
-              initiallyExpanded: false,
+              initiallyExpanded: hasWarning,
               children: [
                 for (final entry in widget.log) _LogEntryTile(entry: entry),
               ],
@@ -1082,7 +1094,6 @@ esac''',
     }
     return trimmed;
   }
-
 }
 
 class _CommandGroupData {

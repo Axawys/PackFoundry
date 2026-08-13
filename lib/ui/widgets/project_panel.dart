@@ -7,19 +7,17 @@ import 'status_chip.dart';
 
 class ProjectPanel extends StatelessWidget {
   const ProjectPanel({
-    required this.projectPath,
+    required this.pathController,
     required this.checks,
     required this.onChooseProject,
-    required this.onImportConfig,
-    required this.onExportConfig,
+    required this.onPathSubmitted,
     super.key,
   });
 
-  final String? projectPath;
+  final TextEditingController pathController;
   final List<ProjectCheck> checks;
   final VoidCallback onChooseProject;
-  final VoidCallback onImportConfig;
-  final VoidCallback onExportConfig;
+  final VoidCallback onPathSubmitted;
 
   @override
   Widget build(BuildContext context) {
@@ -41,22 +39,25 @@ class ProjectPanel extends StatelessWidget {
                 icon: const Icon(Icons.folder_outlined),
                 label: Text(l10n.chooseFolder),
               ),
-              OutlinedButton.icon(
-                onPressed: onImportConfig,
-                icon: const Icon(Icons.file_open_outlined),
-                label: Text(l10n.importConfig),
-              ),
-              OutlinedButton.icon(
-                onPressed: onExportConfig,
-                icon: const Icon(Icons.save_alt_outlined),
-                label: Text(l10n.exportConfig),
-              ),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: Text(
-                  projectPath ?? l10n.noProjectSelected,
-                  style: Theme.of(context).textTheme.titleMedium,
-                  overflow: TextOverflow.ellipsis,
+              SizedBox(
+                width: 520,
+                child: Focus(
+                  // Typing a path only counts once the field is left or Enter
+                  // is pressed, so half-typed paths are not applied.
+                  onFocusChange: (hasFocus) {
+                    if (!hasFocus) {
+                      onPathSubmitted();
+                    }
+                  },
+                  child: TextField(
+                    controller: pathController,
+                    decoration: InputDecoration(
+                      labelText: l10n.projectPath,
+                      hintText: l10n.noProjectSelected,
+                      prefixIcon: const Icon(Icons.folder_outlined),
+                    ),
+                    onSubmitted: (_) => onPathSubmitted(),
+                  ),
                 ),
               ),
             ],
