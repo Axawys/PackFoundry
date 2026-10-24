@@ -19,6 +19,7 @@ import '../../core/services/android_device_service.dart';
 import '../../core/services/app_preferences.dart';
 import '../../core/services/build_service.dart';
 import '../../core/services/builder_environment_service.dart';
+import '../../core/services/flutter_locator.dart';
 import '../../core/services/package_inspector_service.dart';
 import '../../core/services/project_config_service.dart';
 import '../../core/services/project_icon_finder.dart';
@@ -1574,28 +1575,28 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     }
   }
 
-  Future<Process> _startFlutterRun(String projectPath) async {
-    ProcessException? lastError;
-    for (final executable in _flutterExecutableCandidates()) {
-      try {
-        return await Process.start(
-          executable,
-          ['run', '-d', 'linux'],
-          workingDirectory: projectPath,
-          runInShell: true,
-          environment: _runEnvironment(),
-        );
-      } on ProcessException catch (error) {
-        lastError = error;
-      }
-    }
+  Future<Process> _startFlutterRun(String projectPath) {
+    return _startFlutter(projectPath, const ['run', '-d', 'linux']);
+  }
 
-    throw lastError ??
-        const ProcessException('flutter', [
-          'run',
-          '-d',
-          'linux',
-        ], 'Flutter executable was not found.');
+  /// Starts the resolved flutter executable without a shell, so a missing
+  /// SDK is reported instead of ending as "flutter: command not found".
+  Future<Process> _startFlutter(String projectPath, List<String> arguments) {
+    final locator = FlutterLocator();
+    final flutter = locator.find();
+    if (flutter == null) {
+      throw ProcessException(
+        'flutter',
+        arguments,
+        context.l10n.flutterSdkNotFound,
+      );
+    }
+    return Process.start(
+      flutter.path,
+      arguments,
+      workingDirectory: projectPath,
+      environment: {...?_runEnvironment(), ...locator.environmentFor(flutter)},
+    );
   }
 
   void _listenToRunOutput(Stream<List<int>> stream, BuildLogState state) {
@@ -2006,28 +2007,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     return null;
   }
 
-  Future<Process> _startFlutterApkBuild(String projectPath) async {
-    ProcessException? lastError;
-    for (final executable in _flutterExecutableCandidates()) {
-      try {
-        return await Process.start(
-          executable,
-          ['build', 'apk', '--release'],
-          workingDirectory: projectPath,
-          runInShell: true,
-          environment: _runEnvironment(),
-        );
-      } on ProcessException catch (error) {
-        lastError = error;
-      }
-    }
-
-    throw lastError ??
-        const ProcessException('flutter', [
-          'build',
-          'apk',
-          '--release',
-        ], 'Flutter executable was not found.');
+  Future<Process> _startFlutterApkBuild(String projectPath) {
+    return _startFlutter(projectPath, const ['build', 'apk', '--release']);
   }
 
   Future<int> _runSendStep(Process process) async {
@@ -2118,11 +2099,6 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     });
   }
 
-  List<String> _flutterExecutableCandidates() {
-    final managedFlutter = _managedFlutterExecutable();
-    return ['flutter', if (managedFlutter.existsSync()) managedFlutter.path];
-  }
-
   Map<String, String>? _runEnvironment() {
     final sdkRoot =
         Platform.environment['ANDROID_HOME'] ??
@@ -2139,15 +2115,6 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       'ANDROID_HOME': managedSdk.path,
       'ANDROID_SDK_ROOT': managedSdk.path,
     };
-  }
-
-  File _managedFlutterExecutable() {
-    return File(
-      _joinPath(
-        _joinPath(_userDataDirectory().path, 'pack_foundry/flutter/bin'),
-        'flutter',
-      ),
-    );
   }
 
   Directory _managedAndroidSdkDirectory() {

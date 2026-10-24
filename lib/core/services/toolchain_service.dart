@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models/tool_status.dart';
+import 'flutter_locator.dart';
 
 /// Reports progress of a single install step. [fraction] is 0-1, or null when
 /// the running tool does not expose measurable progress.
@@ -42,12 +43,7 @@ class ToolchainService {
     _activeHttpClient?.close(force: true);
   }
 
-  File get managedFlutterExecutable => File(
-    _joinPath(
-      _joinPath(_userDataDirectory().path, 'pack_foundry/flutter/bin'),
-      'flutter',
-    ),
-  );
+  File get managedFlutterExecutable => FlutterLocator().managedExecutable;
 
   Directory get managedAndroidSdkDirectory => Directory(
     _joinPath(_userDataDirectory().path, 'pack_foundry/android-sdk'),
@@ -78,15 +74,14 @@ class ToolchainService {
     }
   }
 
+  /// Checks the same executable builds will use, so the toolchain tab never
+  /// reports Flutter as installed while builds cannot start it.
   Future<ToolAvailability> flutterAvailability() async {
-    final systemStatus = await commandAvailability('flutter', ['--version']);
-    if (systemStatus == ToolAvailability.installed) {
-      return systemStatus;
-    }
-    if (!managedFlutterExecutable.existsSync()) {
+    final flutter = FlutterLocator().find();
+    if (flutter == null) {
       return ToolAvailability.missing;
     }
-    return commandAvailability(managedFlutterExecutable.path, ['--version']);
+    return commandAvailability(flutter.path, ['--version']);
   }
 
   Future<ToolAvailability> appImageToolAvailability() async {

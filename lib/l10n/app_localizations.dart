@@ -335,6 +335,9 @@ class AppLocalizations {
       ? 'Host rpm-сборка пока доступна только для Fedora/RHEL-like систем.'
       : 'Host rpm builds are currently enabled only for Fedora/RHEL-like systems.';
 
+  String get flutterSdkNotFound => _isRu
+      ? 'Flutter SDK не найден. Установите его в «Настройки → Общие» или добавьте папку flutter/bin в PATH.'
+      : 'Flutter SDK was not found. Install it in Settings → Common tools, or add the flutter/bin folder to PATH.';
   String get flutterSdkNote => _isRu
       ? 'Нужен для сборки под любую платформу.'
       : 'Required for every build target.';
