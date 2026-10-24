@@ -36,8 +36,9 @@ class BuildTarget {
       TargetStatus.installable => 'Install extra tools to enable',
       TargetStatus.blocked => 'Blocked until SDK/toolchain is installed',
       TargetStatus.hostLimited => 'Requires native host or remote builder',
+      TargetStatus.missingPlatform => 'Platform is not added to the project',
     };
   }
 }
 
-enum TargetStatus { ready, installable, blocked, hostLimited }
+enum TargetStatus { ready, installable, blocked, hostLimited, missingPlatform }

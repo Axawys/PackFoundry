@@ -309,6 +309,9 @@ class AppLocalizations {
   String get pacmanHostInstallUnsupported => _isRu
       ? 'Пакеты pacman можно собрать только на Arch-based системе.'
       : 'pacman packages can only be built on an Arch-based system.';
+  String targetMissingPlatform(String folder) => _isRu
+      ? 'Нет папки $folder/ в проекте — flutter create --platforms=$folder .'
+      : 'No $folder/ folder in the project — flutter create --platforms=$folder .';
   String get tarGzTargetHint => _isRu
       ? 'Переносимый архив: распаковать и запустить, не пакет'
       : 'Portable archive to unpack and run, not a package';
@@ -641,6 +644,10 @@ class AppLocalizations {
         _isRu
             ? 'Заблокировано до установки SDK/toolchain'
             : 'Blocked until SDK/toolchain is installed',
+      'missingPlatform' =>
+        _isRu
+            ? 'Платформа не добавлена в проект'
+            : 'Platform is not added to the project',
       'hostLimited' =>
         _isRu
             ? 'Нужен нативный хост или удалённый сборщик'

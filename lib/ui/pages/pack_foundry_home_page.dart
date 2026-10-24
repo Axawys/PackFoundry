@@ -23,6 +23,7 @@ import '../../core/services/flutter_locator.dart';
 import '../../core/services/package_inspector_service.dart';
 import '../../core/services/project_config_service.dart';
 import '../../core/services/project_icon_finder.dart';
+import '../../core/services/project_platforms.dart';
 import '../../core/services/toolchain_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../widgets/app_settings_panel.dart';
@@ -135,6 +136,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   ToolAvailability _debToolStatus = ToolAvailability.available;
   ToolAvailability _rpmToolStatus = ToolAvailability.available;
   ToolAvailability _makepkgStatus = ToolAvailability.available;
+
+  /// False until the first toolchain probe finishes; targets keep their
+  /// optimistic defaults until then.
+  bool _toolchainChecked = false;
   ToolAvailability _fakerootStatus = ToolAvailability.available;
   ToolAvailability _tarToolStatus = ToolAvailability.available;
   ToolAvailability _zipToolStatus = ToolAvailability.available;
@@ -311,41 +316,55 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       _archiveToolsStatus = results[12];
       _makepkgStatus = results[13];
       _fakerootStatus = results[14];
-      _updateAndroidTargetStatus();
-      _updatePacmanTargetStatus();
+      _toolchainChecked = true;
+      _updateTargetStatuses();
     });
   }
 
-  void _updateAndroidTargetStatus() {
-    final androidReady = _androidBuildStatus == ToolAvailability.installed;
-    for (final target in _targets.where(
-      (target) => target.platform == 'Android',
-    )) {
-      target.status = androidReady
-          ? TargetStatus.ready
-          : TargetStatus.installable;
-    }
-  }
-
-  /// pacman packages are built natively with makepkg, so only Arch-based
-  /// hosts can produce them.
-  void _updatePacmanTargetStatus() {
-    final isArch = _hostDistribution.family == _LinuxDistributionFamily.arch;
-    final ready =
-        _makepkgStatus == ToolAvailability.installed &&
-        _fakerootStatus == ToolAvailability.installed;
-    for (final target in _targets.where(
-      (target) => target.artifact == 'pacman package',
-    )) {
-      target.status = !isArch
-          ? TargetStatus.hostLimited
-          : ready
-          ? TargetStatus.ready
-          : TargetStatus.installable;
+  /// Recomputes every target from the toolchain state and the selected
+  /// project. A target whose platform folder the project lacks cannot be
+  /// built at all, so it is disabled before the flutter tool fails on it.
+  void _updateTargetStatuses() {
+    final projectPath = _projectPath;
+    for (final target in _targets) {
+      final missingPlatform =
+          projectPath != null &&
+          !ProjectPlatforms.supports(projectPath, target.platform);
+      target.status = missingPlatform
+          ? TargetStatus.missingPlatform
+          : _toolchainTargetStatus(target);
       if (!target.canSelect) {
         target.selected = false;
       }
     }
+  }
+
+  TargetStatus _toolchainTargetStatus(BuildTarget target) {
+    if (target.platform == 'Windows') {
+      return TargetStatus.installable;
+    }
+    if (!_toolchainChecked) {
+      return target.platform == 'Android'
+          ? TargetStatus.installable
+          : TargetStatus.ready;
+    }
+    if (target.platform == 'Android') {
+      return _androidBuildStatus == ToolAvailability.installed
+          ? TargetStatus.ready
+          : TargetStatus.installable;
+    }
+    // pacman packages are built natively with makepkg, so only Arch-based
+    // hosts can produce them.
+    if (target.artifact == 'pacman package') {
+      if (_hostDistribution.family != _LinuxDistributionFamily.arch) {
+        return TargetStatus.hostLimited;
+      }
+      return _makepkgStatus == ToolAvailability.installed &&
+              _fakerootStatus == ToolAvailability.installed
+          ? TargetStatus.ready
+          : TargetStatus.installable;
+    }
+    return TargetStatus.ready;
   }
 
   Future<ToolAvailability> _linuxToolchainAvailable() async {
@@ -2182,6 +2201,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
         _hasDesktopRunner = false;
         _projectChecks.clear();
         _projectPathController.clear();
+        _updateTargetStatuses();
+        if (!_isBuilding) {
+          _replaceRoadmapWithPreview();
+        }
       });
       return;
     }
@@ -2230,6 +2253,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
         _iconAutoDetected = detectedIcon != null;
       }
       _projectPath = path;
+      _updateTargetStatuses();
+      if (!_isBuilding) {
+        _replaceRoadmapWithPreview();
+      }
       _hasDesktopRunner = _hasLinuxRunner(path);
       if (_projectPathController.text != path) {
         _projectPathController.text = path;

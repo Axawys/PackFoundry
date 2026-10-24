@@ -8,6 +8,7 @@ import '../models/build_log_entry.dart';
 import '../models/build_target.dart';
 import 'builder_environment_service.dart';
 import 'flutter_locator.dart';
+import 'project_platforms.dart';
 
 class BuildService {
   static const _stepProject = 'project';
@@ -71,17 +72,41 @@ class BuildService {
       configuration.outputPath ??
           _joinPath(configuration.projectPath, 'build/pack_foundry'),
     );
-    final linuxTargets = selectedTargets
+    final missingPlatformTargets = selectedTargets
+        .where(
+          (target) => !ProjectPlatforms.supports(
+            configuration.projectPath,
+            target.platform,
+          ),
+        )
+        .toList();
+    final buildableTargets = selectedTargets
+        .where((target) => !missingPlatformTargets.contains(target))
+        .toList();
+    final linuxTargets = buildableTargets
         .where((target) => target.platform == 'Linux')
         .toList();
-    final windowsTargets = selectedTargets
+    final windowsTargets = buildableTargets
         .where((target) => target.platform == 'Windows')
         .toList();
-    final androidTargets = selectedTargets
+    final androidTargets = buildableTargets
         .where((target) => target.platform == 'Android')
         .toList();
 
-    yield BuildEvent.roadmapPlan(createRoadmapPlan(selectedTargets));
+    yield BuildEvent.roadmapPlan(createRoadmapPlan(buildableTargets));
+    for (final target in missingPlatformTargets) {
+      final folder = ProjectPlatforms.folderFor(target.platform);
+      yield BuildEvent.log(
+        BuildLogEntry(
+          title: '${target.platform} ${target.artifact} skipped',
+          detail:
+              'The project has no $folder/ folder, so it cannot be built for '
+              '${target.platform}. Add the platform with: '
+              'flutter create --platforms=$folder .',
+          state: BuildLogState.warning,
+        ),
+      );
+    }
 
     Directory? buildTempDirectory;
     var dockerTouchedWorkspace = false;

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/models/build_target.dart';
+import '../../core/services/project_platforms.dart';
 import '../../l10n/app_localizations.dart';
 import 'section.dart';
 
@@ -81,9 +82,13 @@ class InstallerSettingsPanel extends StatelessWidget {
                         title: target.displayLabel,
                         // tar.gz is often mistaken for an installable
                         // package, so say what it is instead of "ready".
-                        subtitle:
-                            target.artifact == 'tar.gz bundle' &&
-                                target.status == TargetStatus.ready
+                        subtitle: target.status == TargetStatus.missingPlatform
+                            ? l10n.targetMissingPlatform(
+                                ProjectPlatforms.folderFor(target.platform) ??
+                                    target.platform.toLowerCase(),
+                              )
+                            : target.artifact == 'tar.gz bundle' &&
+                                  target.status == TargetStatus.ready
                             ? l10n.tarGzTargetHint
                             : l10n.targetStatusLabel(target.status.name),
                         onChanged: (selected) => onChanged(target, selected),
