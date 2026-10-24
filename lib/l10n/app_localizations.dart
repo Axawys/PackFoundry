@@ -89,6 +89,10 @@ class AppLocalizations {
       _isRu ? 'Описание найдено' : 'Description found';
   String get projectDescriptionMissing =>
       _isRu ? 'Описание не указано' : 'Description missing';
+  String projectIconFound(String path) =>
+      _isRu ? 'Иконка: $path' : 'Icon: $path';
+  String get projectIconMissing =>
+      _isRu ? 'Иконка в assets не найдена' : 'No icon found in assets';
   String get configImported => _isRu
       ? 'Конфиг PackFoundry применён.'
       : 'PackFoundry config was applied.';

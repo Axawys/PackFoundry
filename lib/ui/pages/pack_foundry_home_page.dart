@@ -21,6 +21,7 @@ import '../../core/services/build_service.dart';
 import '../../core/services/builder_environment_service.dart';
 import '../../core/services/package_inspector_service.dart';
 import '../../core/services/project_config_service.dart';
+import '../../core/services/project_icon_finder.dart';
 import '../../core/services/toolchain_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../widgets/app_settings_panel.dart';
@@ -95,6 +96,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   String? _projectPath;
   String? _activeConfigPath;
   String? _iconPath;
+
+  /// True while [_iconPath] was found in the project rather than chosen by
+  /// the user or a config, so switching projects may replace it.
+  bool _iconAutoDetected = false;
   String? _outputPath;
   PackageInspection? _packageInspection;
   bool _isBuilding = false;
@@ -2240,8 +2245,23 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     final windowSize = _readFlutterWindowSize(path);
     final projectMetadata = _readProjectMetadata(path);
     final projectAppName = projectMetadata.name;
+    final detectedIcon = const ProjectIconFinder().find(path);
+    final previousProject = _projectPath;
+    final currentIcon = _iconPath;
+    // Never override an icon the user picked from outside the old project.
+    final canReplaceIcon =
+        currentIcon == null ||
+        _iconAutoDetected ||
+        (previousProject != null &&
+            currentIcon.startsWith(
+              '$previousProject${Platform.pathSeparator}',
+            ));
 
     setState(() {
+      if (canReplaceIcon) {
+        _iconPath = detectedIcon;
+        _iconAutoDetected = detectedIcon != null;
+      }
       _projectPath = path;
       _hasDesktopRunner = _hasLinuxRunner(path);
       if (_projectPathController.text != path) {
@@ -2249,7 +2269,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       }
       _projectChecks
         ..clear()
-        ..addAll(_buildProjectChecks(path, projectMetadata));
+        ..addAll(_buildProjectChecks(path, projectMetadata, detectedIcon));
       if (windowSize != null) {
         _widthController.text = windowSize.width.toString();
         _heightController.text = windowSize.height.toString();
@@ -2498,6 +2518,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       }
       if (!config.choosesIcon) {
         _iconPath = config.iconPath;
+        _iconAutoDetected = false;
       }
       if (config.packageTypes.isNotEmpty) {
         for (final target in _targets) {
@@ -2647,6 +2668,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   List<ProjectCheck> _buildProjectChecks(
     String projectPath,
     _ProjectMetadata metadata,
+    String? detectedIcon,
   ) {
     final l10n = context.l10n;
     final hasPubspec = File(
@@ -2680,6 +2702,14 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
             ? l10n.projectDescriptionFound
             : l10n.projectDescriptionMissing,
         tone: hasDescription ? ChipTone.good : ChipTone.neutral,
+      ),
+      ProjectCheck(
+        label: detectedIcon != null
+            ? l10n.projectIconFound(
+                detectedIcon.substring(projectPath.length + 1),
+              )
+            : l10n.projectIconMissing,
+        tone: detectedIcon != null ? ChipTone.good : ChipTone.neutral,
       ),
     ];
   }
@@ -2763,6 +2793,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
 
     setState(() {
       _iconPath = file.path;
+      _iconAutoDetected = false;
     });
   }
 
