@@ -7,10 +7,12 @@ class ToolchainGroup {
     required this.status,
     required this.tools,
     required this.installTarget,
+    this.category = ToolchainCategory.platform,
     this.canRemove = false,
     this.installProgress,
     this.installSizeLabel,
     this.guideSteps = const [],
+    this.dependencyNote,
   });
 
   final String title;
@@ -18,10 +20,15 @@ class ToolchainGroup {
   final ToolAvailability status;
   final List<ToolStatus> tools;
   final ToolchainInstallTarget installTarget;
+  final ToolchainCategory category;
   final bool canRemove;
   final ToolInstallProgress? installProgress;
   final String? installSizeLabel;
   final List<String> guideSteps;
+
+  /// Shown when the group relies on tools from another group that are not
+  /// ready yet, e.g. platform targets waiting for the common Flutter SDK.
+  final String? dependencyNote;
 
   ChipTone get chipTone {
     return switch (status) {
@@ -70,14 +77,34 @@ class ToolInstallProgress {
     required this.progress,
     required this.remainingSeconds,
     required this.detail,
+    this.steps = const [],
+    this.currentStep = 0,
+    this.stepProgress,
+    this.cancellable = true,
   });
 
   final ToolchainInstallTarget target;
+
+  /// Overall progress of the whole installation, 0-100.
   final int progress;
-  final int remainingSeconds;
+
+  /// Estimated time left, or null while there is not enough data to guess.
+  final int? remainingSeconds;
   final String detail;
+  final List<String> steps;
+  final int currentStep;
+
+  /// Progress of the current step, 0-100, or null when the step cannot report
+  /// it (for example a package manager running behind pkexec).
+  final int? stepProgress;
+
+  /// False while a step runs that cannot be interrupted safely, such as a
+  /// privileged package manager transaction.
+  final bool cancellable;
 }
 
 enum ToolAvailability { installed, available, missing }
 
-enum ToolchainInstallTarget { rpm, deb, appImage, tarGz, exe, android }
+enum ToolchainInstallTarget { common, rpm, deb, appImage, tarGz, exe, android }
+
+enum ToolchainCategory { common, platform }

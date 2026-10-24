@@ -170,10 +170,53 @@ class AppLocalizations {
     return _isRu ? 'Размер: $size' : 'Size: $size';
   }
 
-  String builderInstallProgress(int progress) {
-    return _isRu
-        ? 'Установка builder: $progress%'
-        : 'Builder install: $progress%';
+  String get toolchainCommonSection => _isRu ? 'Общие' : 'Common';
+  String get toolchainCommonSectionHint => _isRu
+      ? 'Нужны для сборки под любую платформу.'
+      : 'Needed for every build target.';
+  String get toolchainPlatformsSection => _isRu ? 'Платформы' : 'Platforms';
+  String get toolchainPlatformsSectionHint => _isRu
+      ? 'Дополнительные инструменты для конкретных форматов пакетов.'
+      : 'Extra tools for specific package formats.';
+  String get commonToolsGroupTitle => 'FLUTTER';
+  String get commonToolsGroupSubtitle => _isRu
+      ? 'Flutter SDK и системные утилиты, без которых не соберётся ни одна цель.'
+      : 'Flutter SDK and system utilities that every build target relies on.';
+  String get gitNote => _isRu
+      ? 'Загружает и обновляет Flutter SDK.'
+      : 'Downloads and updates the Flutter SDK.';
+  String get archiveToolsName => _isRu
+      ? 'Утилиты загрузки и распаковки'
+      : 'Download and archive utilities';
+  String get archiveToolsNote => _isRu
+      ? 'Flutter использует их, чтобы скачать Dart SDK и артефакты движка.'
+      : 'Flutter uses them to fetch the Dart SDK and engine artifacts.';
+  String get requiresCommonTools => _isRu
+      ? 'Также нужны общие инструменты — они установятся вместе с этой группой.'
+      : 'Common tools are also required; they are installed along with this group.';
+  String get installPreparing =>
+      _isRu ? 'Подготовка установки…' : 'Preparing installation…';
+  String get installStepSystemPackages =>
+      _isRu ? 'Системные пакеты' : 'System packages';
+  String get installStepFlutterSdk => 'Flutter SDK';
+  String get installStepAndroidSdk => 'Android SDK';
+  String get installStepAppImageTool => 'AppImageTool';
+  String get installStepContainerRuntime =>
+      _isRu ? 'Контейнерный runtime' : 'Container runtime';
+  String get installStepBuilderImage =>
+      _isRu ? 'Образ builder' : 'Builder image';
+  String get installEstimatingTime =>
+      _isRu ? 'Оцениваем время…' : 'Estimating time…';
+  String get installCannotCancel => _isRu
+      ? 'Этот шаг выполняет пакетный менеджер, его нельзя прервать безопасно.'
+      : 'This step runs the package manager and cannot be interrupted safely.';
+
+  String installOverallProgress(int progress) {
+    return _isRu ? 'Установка: $progress%' : 'Installing: $progress%';
+  }
+
+  String installStepCounter(int current, int total) {
+    return _isRu ? 'Шаг $current из $total' : 'Step $current of $total';
   }
 
   String toolInstallSuccess(String detail) {

@@ -115,10 +115,13 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   int _workspaceIndex = 1;
   late final TabController _workspaceTabController;
   ToolAvailability _flutterStatus = ToolAvailability.available;
+  ToolAvailability _gitStatus = ToolAvailability.available;
+  ToolAvailability _archiveToolsStatus = ToolAvailability.available;
   ToolAvailability _linuxToolchainStatus = ToolAvailability.available;
   ToolAvailability _containerRuntimeStatus = ToolAvailability.available;
   String? _containerRuntimeName;
   ToolInstallProgress? _installProgress;
+  bool _toolInstallCancelRequested = false;
   ToolAvailability _debBuilderStatus = ToolAvailability.available;
   ToolAvailability _rpmBuilderStatus = ToolAvailability.available;
   ToolAvailability _appImageToolStatus = ToolAvailability.available;
@@ -264,6 +267,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       _toolchainService.commandAvailability('zip', ['--version']),
       _toolchainService.commandAvailability('java', ['-version']),
       _toolchainService.androidSdkAvailability(),
+      _toolchainService.commandAvailability('git', ['--version']),
+      _archiveToolsAvailable(),
     ]);
 
     if (!mounted) {
@@ -286,6 +291,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       _zipToolStatus = results[8];
       _javaStatus = results[9];
       _androidSdkStatus = results[10];
+      _gitStatus = results[11];
+      _archiveToolsStatus = results[12];
       _updateAndroidTargetStatus();
     });
   }
@@ -306,6 +313,16 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       const CommandCheck('clang', ['--version']),
       const CommandCheck('cmake', ['--version']),
       const CommandCheck('ninja', ['--version']),
+    ]);
+    return available ? ToolAvailability.installed : ToolAvailability.missing;
+  }
+
+  /// Utilities the flutter tool itself needs to fetch the Dart SDK and engine.
+  Future<ToolAvailability> _archiveToolsAvailable() async {
+    final available = await _toolchainService.allCommandsAvailable([
+      const CommandCheck('curl', ['--version']),
+      const CommandCheck('unzip', ['-v']),
+      const CommandCheck('xz', ['--version']),
     ]);
     return available ? ToolAvailability.installed : ToolAvailability.missing;
   }
@@ -367,12 +384,50 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
         : [rpmGroup, debGroup];
 
     return [
+      _commonToolsGroup(l10n),
       ...nativePackageGroups,
       _appImageBuildGroup(l10n),
       _tarGzBuildGroup(l10n),
       _windowsBuildGroup(l10n),
       _androidBuildGroup(l10n),
     ];
+  }
+
+  ToolchainGroup _commonToolsGroup(AppLocalizations l10n) {
+    return ToolchainGroup(
+      title: l10n.commonToolsGroupTitle,
+      subtitle: l10n.commonToolsGroupSubtitle,
+      status: _commonToolsStatus,
+      category: ToolchainCategory.common,
+      installTarget: ToolchainInstallTarget.common,
+      installProgress: _installProgressFor(ToolchainInstallTarget.common),
+      tools: [
+        _flutterTool(l10n),
+        ToolStatus(
+          name: 'Git',
+          command: 'git',
+          status: _gitStatus,
+          note: l10n.gitNote,
+        ),
+        ToolStatus(
+          name: l10n.archiveToolsName,
+          command: 'curl, unzip, xz',
+          status: _archiveToolsStatus,
+          note: l10n.archiveToolsNote,
+        ),
+      ],
+    );
+  }
+
+  ToolInstallProgress? _installProgressFor(ToolchainInstallTarget target) {
+    return _installProgress?.target == target ? _installProgress : null;
+  }
+
+  /// Platform groups that build on the host need the common Flutter SDK.
+  String? _commonToolsDependencyNote(AppLocalizations l10n) {
+    return _commonToolsStatus == ToolAvailability.installed
+        ? null
+        : l10n.requiresCommonTools;
   }
 
   ToolchainGroup _debBuildGroup(
@@ -383,7 +438,6 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     final tools = isNativeDeb
         ? [
             _hostSystemTool(l10n, distribution),
-            _flutterTool(l10n),
             _linuxToolchainTool(l10n),
             ToolStatus(
               name: 'dpkg-deb',
@@ -419,9 +473,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       installTarget: ToolchainInstallTarget.deb,
       canRemove:
           !isNativeDeb && _debBuilderStatus == ToolAvailability.installed,
-      installProgress: _installProgress?.target == ToolchainInstallTarget.deb
-          ? _installProgress
-          : null,
+      installProgress: _installProgressFor(ToolchainInstallTarget.deb),
+      dependencyNote: isNativeDeb ? _commonToolsDependencyNote(l10n) : null,
       installSizeLabel:
           !isNativeDeb && _debBuilderStatus != ToolAvailability.installed
           ? '~5 GB'
@@ -454,9 +507,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
           !isNativeRpm &&
           !unsupportedRpm &&
           _rpmBuilderStatus == ToolAvailability.installed,
-      installProgress: _installProgress?.target == ToolchainInstallTarget.rpm
-          ? _installProgress
-          : null,
+      installProgress: _installProgressFor(ToolchainInstallTarget.rpm),
+      dependencyNote: isNativeRpm ? _commonToolsDependencyNote(l10n) : null,
       installSizeLabel:
           !isNativeRpm &&
               !unsupportedRpm &&
@@ -466,7 +518,6 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       tools: [
         if (isNativeRpm) ...[
           _hostSystemTool(l10n, distribution),
-          _flutterTool(l10n),
           _linuxToolchainTool(l10n),
           ToolStatus(
             name: 'rpmbuild',
@@ -507,8 +558,9 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       subtitle: l10n.appImageBuildGroupSubtitle,
       status: _appImageBuildStatus,
       installTarget: ToolchainInstallTarget.appImage,
+      installProgress: _installProgressFor(ToolchainInstallTarget.appImage),
+      dependencyNote: _commonToolsDependencyNote(l10n),
       tools: [
-        _flutterTool(l10n),
         _linuxToolchainTool(l10n),
         ToolStatus(
           name: 'AppImageTool',
@@ -526,8 +578,9 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       subtitle: l10n.tarGzBuildGroupSubtitle,
       status: _tarGzBuildStatus,
       installTarget: ToolchainInstallTarget.tarGz,
+      installProgress: _installProgressFor(ToolchainInstallTarget.tarGz),
+      dependencyNote: _commonToolsDependencyNote(l10n),
       tools: [
-        _flutterTool(l10n),
         _linuxToolchainTool(l10n),
         ToolStatus(
           name: 'tar',
@@ -547,6 +600,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
           ? ToolAvailability.installed
           : ToolAvailability.available,
       installTarget: ToolchainInstallTarget.exe,
+      installProgress: _installProgressFor(ToolchainInstallTarget.exe),
       guideSteps: l10n.windowsBuildKitGuideSteps,
       tools: [
         ToolStatus(
@@ -576,10 +630,11 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     return ToolchainGroup(
       title: l10n.androidBuildGroupTitle,
       subtitle: l10n.androidBuildGroupSubtitle,
-      status: _androidBuildStatus,
+      status: _androidToolsStatus,
       installTarget: ToolchainInstallTarget.android,
+      installProgress: _installProgressFor(ToolchainInstallTarget.android),
+      dependencyNote: _commonToolsDependencyNote(l10n),
       tools: [
-        _flutterTool(l10n),
         ToolStatus(
           name: 'Android SDK',
           command: r'ANDROID_HOME / sdkmanager',
@@ -629,8 +684,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   }
 
   ToolAvailability get _nativeDebBuildStatus {
-    if (_flutterStatus == ToolAvailability.installed &&
-        _linuxToolchainStatus == ToolAvailability.installed &&
+    if (_linuxToolchainStatus == ToolAvailability.installed &&
         _debToolStatus == ToolAvailability.installed) {
       return ToolAvailability.installed;
     }
@@ -646,8 +700,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   }
 
   ToolAvailability get _nativeRpmBuildStatus {
-    if (_flutterStatus == ToolAvailability.installed &&
-        _linuxToolchainStatus == ToolAvailability.installed &&
+    if (_linuxToolchainStatus == ToolAvailability.installed &&
         _rpmToolStatus == ToolAvailability.installed) {
       return ToolAvailability.installed;
     }
@@ -661,8 +714,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   }
 
   ToolAvailability get _appImageBuildStatus {
-    if (_flutterStatus == ToolAvailability.installed &&
-        _linuxToolchainStatus == ToolAvailability.installed &&
+    if (_linuxToolchainStatus == ToolAvailability.installed &&
         _appImageToolStatus == ToolAvailability.installed) {
       return ToolAvailability.installed;
     }
@@ -670,18 +722,34 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   }
 
   ToolAvailability get _tarGzBuildStatus {
-    if (_flutterStatus == ToolAvailability.installed &&
-        _linuxToolchainStatus == ToolAvailability.installed &&
+    if (_linuxToolchainStatus == ToolAvailability.installed &&
         _tarToolStatus == ToolAvailability.installed) {
       return ToolAvailability.installed;
     }
     return ToolAvailability.available;
   }
 
+  ToolAvailability get _commonToolsStatus {
+    if (_flutterStatus == ToolAvailability.installed &&
+        _gitStatus == ToolAvailability.installed &&
+        _archiveToolsStatus == ToolAvailability.installed) {
+      return ToolAvailability.installed;
+    }
+    return ToolAvailability.available;
+  }
+
+  ToolAvailability get _androidToolsStatus {
+    if (_androidSdkStatus == ToolAvailability.installed &&
+        _javaStatus == ToolAvailability.installed) {
+      return ToolAvailability.installed;
+    }
+    return ToolAvailability.available;
+  }
+
+  /// Android targets are buildable only when the Flutter SDK is there too.
   ToolAvailability get _androidBuildStatus {
     if (_flutterStatus == ToolAvailability.installed &&
-        _androidSdkStatus == ToolAvailability.installed &&
-        _javaStatus == ToolAvailability.installed) {
+        _androidToolsStatus == ToolAvailability.installed) {
       return ToolAvailability.installed;
     }
     return ToolAvailability.available;
@@ -796,17 +864,19 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       return;
     }
 
+    final l10n = context.l10n;
+    _toolInstallCancelRequested = false;
+    _toolchainService.beginInstall();
     setState(() {
       _installingToolTarget = target;
       _installProgress = ToolInstallProgress(
         target: target,
-        progress: 5,
-        remainingSeconds: 60,
-        detail: 'Starting tool installation.',
+        progress: 0,
+        remainingSeconds: null,
+        detail: l10n.installPreparing,
       );
     });
 
-    final l10n = context.l10n;
     final result = await _runToolInstall(target);
 
     if (!mounted) {
@@ -835,7 +905,11 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   }
 
   Future<void> _cancelToolInstall() async {
-    await _builderService.cancelActiveInstall();
+    _toolInstallCancelRequested = true;
+    await Future.wait([
+      _toolchainService.cancelActiveInstall(),
+      _builderService.cancelActiveInstall(),
+    ]);
   }
 
   Future<void> _removeTools(ToolchainInstallTarget target) async {
@@ -879,6 +953,9 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     ToolchainInstallTarget target,
   ) async {
     return switch (target) {
+      ToolchainInstallTarget.common => const ToolInstallResult.failure(
+        'Common tools removal is not implemented yet.',
+      ),
       ToolchainInstallTarget.rpm => _builderService.removeBuilder(
         BuilderEnvironment.rpmFedora,
       ),
@@ -903,252 +980,220 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   Future<ToolInstallResult> _runToolInstall(
     ToolchainInstallTarget target,
   ) async {
+    final l10n = context.l10n;
     final distribution = _hostDistribution;
-    _setToolInstallProgress(
-      target,
-      15,
-      'Checking required tools and package recipes.',
-    );
-    return switch (target) {
-      ToolchainInstallTarget.rpm => _installRpmTools(distribution),
-      ToolchainInstallTarget.deb => _installDebTools(distribution),
-      ToolchainInstallTarget.appImage => _installAppImageTools(distribution),
-      ToolchainInstallTarget.tarGz => _installTarGzTools(distribution),
-      ToolchainInstallTarget.exe => _installWindowsTools(distribution),
-      ToolchainInstallTarget.android => _installAndroidTools(distribution),
+    if (target == ToolchainInstallTarget.rpm &&
+        distribution.family == _LinuxDistributionFamily.unsupportedRpm) {
+      return ToolInstallResult.failure(l10n.rpmHostInstallUnsupported);
+    }
+
+    final steps = switch (target) {
+      ToolchainInstallTarget.common => [
+        if (_gitStatus != ToolAvailability.installed ||
+            _archiveToolsStatus != ToolAvailability.installed)
+          _systemPackagesStep(l10n, _commonPackages),
+        if (_flutterStatus != ToolAvailability.installed) _flutterStep(l10n),
+      ],
+      ToolchainInstallTarget.rpm =>
+        distribution.family == _LinuxDistributionFamily.rpm
+            ? _hostBuildSteps(
+                l10n,
+                systemToolsReady:
+                    _linuxToolchainStatus == ToolAvailability.installed &&
+                    _rpmToolStatus == ToolAvailability.installed,
+                packagesByManager: _rpmHostPackages,
+              )
+            : _builderSteps(l10n, BuilderEnvironment.rpmFedora),
+      ToolchainInstallTarget.deb =>
+        distribution.family == _LinuxDistributionFamily.deb
+            ? _hostBuildSteps(
+                l10n,
+                systemToolsReady:
+                    _linuxToolchainStatus == ToolAvailability.installed &&
+                    _debToolStatus == ToolAvailability.installed,
+                packagesByManager: _debHostPackages,
+              )
+            : _builderSteps(l10n, BuilderEnvironment.debBookworm),
+      ToolchainInstallTarget.appImage => [
+        ..._hostBuildSteps(
+          l10n,
+          systemToolsReady: _linuxToolchainStatus == ToolAvailability.installed,
+          packagesByManager: _appImageHostPackages,
+        ),
+        if (_appImageToolStatus != ToolAvailability.installed)
+          _appImageToolStep(l10n),
+      ],
+      ToolchainInstallTarget.tarGz => _hostBuildSteps(
+        l10n,
+        systemToolsReady:
+            _linuxToolchainStatus == ToolAvailability.installed &&
+            _tarToolStatus == ToolAvailability.installed,
+        packagesByManager: _tarGzHostPackages,
+      ),
+      ToolchainInstallTarget.exe => [
+        if (_zipToolStatus != ToolAvailability.installed)
+          _systemPackagesStep(l10n, _windowsKitPackages),
+      ],
+      ToolchainInstallTarget.android => [
+        ..._hostBuildSteps(
+          l10n,
+          systemToolsReady: await _toolchainService.allCommandsAvailable([
+            const CommandCheck('git', ['--version']),
+            const CommandCheck('unzip', ['-v']),
+            const CommandCheck('java', ['-version']),
+          ]),
+          packagesByManager: _androidHostPackages,
+        ),
+        if (_androidSdkStatus != ToolAvailability.installed)
+          _androidSdkStep(l10n),
+      ],
     };
+
+    if (steps.isEmpty) {
+      return const ToolInstallResult.success(
+        'Required tools are already installed.',
+      );
+    }
+    return _runInstallSteps(target, steps);
   }
 
-  void _setToolInstallProgress(
+  /// Runs install steps in order and turns their reports into one overall
+  /// progress value for the toolchain card.
+  Future<ToolInstallResult> _runInstallSteps(
     ToolchainInstallTarget target,
-    int progress,
-    String detail, {
-    int remainingSeconds = 60,
+    List<_ToolInstallStep> steps,
+  ) async {
+    final session = _ToolInstallSession(target, steps);
+    final messages = <String>[];
+    var lastUpdate = DateTime.fromMillisecondsSinceEpoch(0);
+
+    for (var index = 0; index < steps.length; index++) {
+      void report(double? fraction, String detail, {int? remainingSeconds}) {
+        final progress = session.report(
+          index,
+          fraction,
+          detail,
+          remainingSeconds: remainingSeconds,
+        );
+        // git and sdkmanager can print hundreds of progress lines a second.
+        final now = DateTime.now();
+        final stepChanged = _installProgress?.currentStep != index;
+        if (!mounted ||
+            (!stepChanged &&
+                now.difference(lastUpdate) <
+                    const Duration(milliseconds: 100))) {
+          return;
+        }
+        lastUpdate = now;
+        setState(() => _installProgress = progress);
+      }
+
+      report(null, steps[index].title);
+      final result = await steps[index].run(report);
+      if (_toolInstallCancelRequested) {
+        return const ToolInstallResult.failure('Installation was cancelled.');
+      }
+      if (!result.success) {
+        return result;
+      }
+      messages.add(result.message);
+    }
+    return ToolInstallResult.success(messages.join('\n'));
+  }
+
+  /// Steps for targets built on the host: their system packages and the
+  /// common Flutter SDK, so a single click is enough even on a clean machine.
+  List<_ToolInstallStep> _hostBuildSteps(
+    AppLocalizations l10n, {
+    required bool systemToolsReady,
+    required Map<String, List<String>> packagesByManager,
   }) {
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _installProgress = ToolInstallProgress(
-        target: target,
-        progress: progress.clamp(0, 100),
-        remainingSeconds: remainingSeconds,
-        detail: detail,
-      );
-    });
+    final needsFlutter = _flutterStatus != ToolAvailability.installed;
+    final needsCommonPackages =
+        needsFlutter &&
+        (_gitStatus != ToolAvailability.installed ||
+            _archiveToolsStatus != ToolAvailability.installed);
+    return [
+      if (!systemToolsReady || needsCommonPackages)
+        _systemPackagesStep(
+          l10n,
+          needsCommonPackages
+              ? _mergePackages(_commonPackages, packagesByManager)
+              : packagesByManager,
+        ),
+      if (needsFlutter) _flutterStep(l10n),
+    ];
   }
 
-  Future<ToolInstallResult> _installRpmTools(_HostDistribution distribution) {
-    if (distribution.family == _LinuxDistributionFamily.rpm) {
-      return _installFlutterAndSystemPackages(
-        packagesByManager: const {
-          'dnf': [
-            'git',
-            'clang',
-            'cmake',
-            'ninja-build',
-            'gtk3-devel',
-            'rpm-build',
-          ],
-          'apt-get': [
-            'git',
-            'clang',
-            'cmake',
-            'ninja-build',
-            'libgtk-3-dev',
-            'rpm',
-          ],
-          'zypper': [
-            'git',
-            'clang',
-            'cmake',
-            'ninja',
-            'gtk3-devel',
-            'rpm-build',
-          ],
-          'pacman': ['git', 'clang', 'cmake', 'ninja', 'gtk3', 'rpm-tools'],
-        },
-      );
-    }
-
-    if (distribution.family == _LinuxDistributionFamily.unsupportedRpm) {
-      return Future.value(
-        ToolInstallResult.failure(context.l10n.rpmHostInstallUnsupported),
-      );
-    }
-
-    return _installBuilderEnvironment(BuilderEnvironment.rpmFedora);
-  }
-
-  Future<ToolInstallResult> _installDebTools(_HostDistribution distribution) {
-    if (distribution.family == _LinuxDistributionFamily.deb) {
-      return _installFlutterAndSystemPackages(
-        packagesByManager: const {
-          'dnf': ['clang', 'cmake', 'ninja-build', 'gtk3-devel', 'dpkg-dev'],
-          'apt-get': [
-            'git',
-            'clang',
-            'cmake',
-            'ninja-build',
-            'libgtk-3-dev',
-            'dpkg-dev',
-          ],
-          'zypper': ['git', 'clang', 'cmake', 'ninja', 'gtk3-devel', 'dpkg'],
-          'pacman': ['git', 'clang', 'cmake', 'ninja', 'gtk3', 'dpkg'],
-        },
-      );
-    }
-
-    return _installBuilderEnvironment(BuilderEnvironment.debBookworm);
-  }
-
-  Future<ToolInstallResult> _installTarGzTools(_HostDistribution distribution) {
-    return _installFlutterAndSystemPackages(
-      packagesByManager: const {
-        'dnf': ['git', 'clang', 'cmake', 'ninja-build', 'gtk3-devel', 'tar'],
-        'apt-get': [
-          'git',
-          'clang',
-          'cmake',
-          'ninja-build',
-          'libgtk-3-dev',
-          'tar',
-        ],
-        'zypper': ['git', 'clang', 'cmake', 'ninja', 'gtk3-devel', 'tar'],
-        'pacman': ['git', 'clang', 'cmake', 'ninja', 'gtk3', 'tar'],
-      },
-    );
-  }
-
-  Future<ToolInstallResult> _installWindowsTools(
-    _HostDistribution distribution,
-  ) {
-    return _toolchainService.installSystemPackages(
-      packagesByManager: const {
-        'dnf': ['zip'],
-        'apt-get': ['zip'],
-        'zypper': ['zip'],
-        'pacman': ['zip'],
-      },
-    );
-  }
-
-  Future<ToolInstallResult> _installAndroidTools(
-    _HostDistribution distribution,
-  ) async {
-    final results = <String>[];
-    _setToolInstallProgress(
-      ToolchainInstallTarget.android,
-      20,
-      'Checking git, unzip and Java.',
-      remainingSeconds: 120,
-    );
-    final systemToolsReady = await _toolchainService.allCommandsAvailable([
-      const CommandCheck('git', ['--version']),
-      const CommandCheck('unzip', ['-v']),
-      const CommandCheck('java', ['-version']),
-    ]);
-    final systemResult = systemToolsReady
-        ? const ToolInstallResult.success(
-            'Required system packages are already installed.',
-          )
-        : await _toolchainService.installSystemPackages(
-            packagesByManager: const {
-              'dnf': ['git', 'unzip', 'java-latest-openjdk-devel'],
-              'apt-get': ['git', 'unzip', 'openjdk-17-jdk'],
-              'zypper': ['git', 'unzip', 'java-17-openjdk-devel'],
-              'pacman': ['git', 'unzip', 'jdk17-openjdk'],
-            },
-          );
-    if (!systemResult.success) {
-      return systemResult;
-    }
-    results.add(systemResult.message);
-
-    _setToolInstallProgress(
-      ToolchainInstallTarget.android,
-      40,
-      'Checking Flutter SDK.',
-      remainingSeconds: 90,
-    );
-    final flutterResult = await _installFlutterSdkIfNeeded();
-    if (!flutterResult.success) {
-      return flutterResult;
-    }
-    results.add(flutterResult.message);
-
-    if (_androidSdkStatus != ToolAvailability.installed) {
-      _setToolInstallProgress(
-        ToolchainInstallTarget.android,
-        65,
-        'Downloading Android command line tools and SDK packages.',
-        remainingSeconds: 180,
-      );
-      final androidResult = await _toolchainService.installAndroidSdk();
-      if (!androidResult.success) {
-        return androidResult;
-      }
-      results.add(androidResult.message);
-    }
-
-    _setToolInstallProgress(
-      ToolchainInstallTarget.android,
-      95,
-      'Android tools are ready.',
-      remainingSeconds: 5,
-    );
-    return ToolInstallResult.success(results.join('\n'));
-  }
-
-  Future<ToolInstallResult> _installAppImageTools(
-    _HostDistribution distribution,
-  ) async {
-    ToolInstallResult? systemResult;
-    if (_flutterStatus != ToolAvailability.installed ||
-        _linuxToolchainStatus != ToolAvailability.installed) {
-      systemResult = await _installFlutterAndSystemPackages(
-        packagesByManager: const {
-          'dnf': ['git', 'clang', 'cmake', 'ninja-build', 'gtk3-devel'],
-          'apt-get': ['git', 'clang', 'cmake', 'ninja-build', 'libgtk-3-dev'],
-          'zypper': ['git', 'clang', 'cmake', 'ninja', 'gtk3-devel'],
-          'pacman': ['git', 'clang', 'cmake', 'ninja', 'gtk3'],
-        },
-      );
-      if (!systemResult.success) {
-        return systemResult;
-      }
-    }
-
-    if (_appImageToolStatus == ToolAvailability.installed) {
-      return systemResult ??
-          const ToolInstallResult.success(
-            'Required tools are already installed.',
-          );
-    }
-
-    final appImageToolResult = await _toolchainService.installAppImageTool();
-    if (!appImageToolResult.success) {
-      return appImageToolResult;
-    }
-
-    if (systemResult != null) {
-      return ToolInstallResult.success(
-        '${systemResult.message}\n${appImageToolResult.message}',
-      );
-    }
-    return appImageToolResult;
-  }
-
-  Future<ToolInstallResult> _installBuilderEnvironment(
+  List<_ToolInstallStep> _builderSteps(
+    AppLocalizations l10n,
     BuilderEnvironment builder,
-  ) async {
-    if (_containerRuntimeStatus != ToolAvailability.installed) {
-      final runtimeResult = await _installDockerTools();
-      if (!runtimeResult.success) {
-        return runtimeResult;
-      }
-    }
+  ) {
+    return [
+      if (_containerRuntimeStatus != ToolAvailability.installed)
+        _ToolInstallStep(
+          title: l10n.installStepContainerRuntime,
+          weight: 3,
+          cancellable: false,
+          run: _installDockerTools,
+        ),
+      _ToolInstallStep(
+        title: l10n.installStepBuilderImage,
+        weight: 8,
+        run: (report) => _installBuilderImage(builder, report),
+      ),
+    ];
+  }
 
+  _ToolInstallStep _systemPackagesStep(
+    AppLocalizations l10n,
+    Map<String, List<String>> packagesByManager,
+  ) {
+    return _ToolInstallStep(
+      title: l10n.installStepSystemPackages,
+      weight: 3,
+      cancellable: false,
+      run: (report) => _toolchainService.installSystemPackages(
+        packagesByManager: packagesByManager,
+        onProgress: (fraction, detail) => report(fraction, detail),
+      ),
+    );
+  }
+
+  _ToolInstallStep _flutterStep(AppLocalizations l10n) {
+    return _ToolInstallStep(
+      title: l10n.installStepFlutterSdk,
+      weight: 6,
+      run: (report) => _toolchainService.installFlutterSdk(
+        onProgress: (fraction, detail) => report(fraction, detail),
+      ),
+    );
+  }
+
+  _ToolInstallStep _androidSdkStep(AppLocalizations l10n) {
+    return _ToolInstallStep(
+      title: l10n.installStepAndroidSdk,
+      weight: 6,
+      run: (report) => _toolchainService.installAndroidSdk(
+        onProgress: (fraction, detail) => report(fraction, detail),
+      ),
+    );
+  }
+
+  _ToolInstallStep _appImageToolStep(AppLocalizations l10n) {
+    return _ToolInstallStep(
+      title: l10n.installStepAppImageTool,
+      weight: 1,
+      run: (report) => _toolchainService.installAppImageTool(
+        onProgress: (fraction, detail) => report(fraction, detail),
+      ),
+    );
+  }
+
+  Future<ToolInstallResult> _installBuilderImage(
+    BuilderEnvironment builder,
+    _InstallStepReport report,
+  ) async {
     ToolInstallResult? result;
     await for (final event in _builderService.installBuilder(builder)) {
       final eventResult = event.result;
@@ -1156,73 +1201,21 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
         result = eventResult;
         continue;
       }
-      if (!mounted) {
-        continue;
-      }
-      setState(() {
-        _installProgress = ToolInstallProgress(
-          target: builder.id == BuilderEnvironmentId.debBookworm
-              ? ToolchainInstallTarget.deb
-              : ToolchainInstallTarget.rpm,
-          progress: event.progress ?? 0,
-          remainingSeconds: event.remainingSeconds ?? 0,
-          detail: event.detail ?? '',
-        );
-      });
+      final progress = event.progress;
+      report(
+        progress == null ? null : progress / 100,
+        event.detail ?? '',
+        remainingSeconds: event.remainingSeconds,
+      );
     }
 
     return result ??
         const ToolInstallResult.failure('Builder installation did not finish.');
   }
 
-  Future<ToolInstallResult> _installFlutterAndSystemPackages({
-    required Map<String, List<String>> packagesByManager,
-  }) async {
-    final results = <String>[];
-    final systemResult = await _installSystemPackagesIfNeeded(
-      packagesByManager: packagesByManager,
-    );
-    if (!systemResult.success) {
-      return systemResult;
-    }
-    results.add(systemResult.message);
-
-    final flutterResult = await _installFlutterSdkIfNeeded();
-    if (!flutterResult.success) {
-      return flutterResult;
-    }
-    results.add(flutterResult.message);
-
-    return ToolInstallResult.success(results.join('\n'));
-  }
-
-  Future<ToolInstallResult> _installSystemPackagesIfNeeded({
-    required Map<String, List<String>> packagesByManager,
-    bool force = false,
-  }) async {
-    final hasMissingCommonTools =
-        _flutterStatus != ToolAvailability.installed ||
-        _linuxToolchainStatus != ToolAvailability.installed;
-    if (!force && !hasMissingCommonTools) {
-      return const ToolInstallResult.success(
-        'Required system packages are already installed.',
-      );
-    }
-    return _toolchainService.installSystemPackages(
-      packagesByManager: packagesByManager,
-    );
-  }
-
-  Future<ToolInstallResult> _installFlutterSdkIfNeeded() {
-    if (_flutterStatus == ToolAvailability.installed) {
-      return Future.value(
-        const ToolInstallResult.success('Flutter SDK is already installed.'),
-      );
-    }
-    return _toolchainService.installFlutterSdk();
-  }
-
-  Future<ToolInstallResult> _installDockerTools() async {
+  Future<ToolInstallResult> _installDockerTools(
+    _InstallStepReport report,
+  ) async {
     final installResult = await _toolchainService.installSystemPackages(
       packagesByManager: const {
         'dnf': ['moby-engine', 'docker-cli', 'containerd'],
@@ -1230,16 +1223,19 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
         'zypper': ['docker'],
         'pacman': ['docker'],
       },
+      onProgress: (fraction, detail) => report(fraction, detail),
     );
     if (!installResult.success) {
       return installResult;
     }
 
+    report(null, 'Enabling Docker service.');
     final serviceResult = await _toolchainService.enableDockerService();
     if (!serviceResult.success) {
       return serviceResult;
     }
 
+    report(null, 'Adding current user to docker group.');
     final groupResult = await _toolchainService.addCurrentUserToDockerGroup();
     if (!groupResult.success) {
       return groupResult;
@@ -3209,3 +3205,154 @@ class _Workspace {
   final IconData icon;
   final IconData selectedIcon;
 }
+
+typedef _InstallStepReport =
+    void Function(double? fraction, String detail, {int? remainingSeconds});
+
+class _ToolInstallStep {
+  const _ToolInstallStep({
+    required this.title,
+    required this.weight,
+    required this.run,
+    this.cancellable = true,
+  });
+
+  final String title;
+
+  /// Relative share of the overall progress bar, roughly the step duration.
+  final int weight;
+  final bool cancellable;
+  final Future<ToolInstallResult> Function(_InstallStepReport report) run;
+}
+
+class _ToolInstallSession {
+  _ToolInstallSession(this.target, this.steps)
+    : _totalWeight = steps.fold(0, (sum, step) => sum + step.weight);
+
+  final ToolchainInstallTarget target;
+  final List<_ToolInstallStep> steps;
+  final int _totalWeight;
+  final _stopwatch = Stopwatch()..start();
+  var _stepIndex = -1;
+  double? _stepFraction;
+  var _overall = 0.0;
+
+  ToolInstallProgress report(
+    int stepIndex,
+    double? fraction,
+    String detail, {
+    int? remainingSeconds,
+  }) {
+    if (stepIndex != _stepIndex) {
+      _stepIndex = stepIndex;
+      _stepFraction = null;
+    }
+    // A null fraction means "no new measurement", so the last one is kept and
+    // the bar never jumps backwards.
+    if (fraction != null) {
+      final clamped = fraction.clamp(0.0, 1.0);
+      if (_stepFraction == null || clamped > _stepFraction!) {
+        _stepFraction = clamped;
+      }
+    }
+
+    var doneWeight = 0;
+    for (var index = 0; index < stepIndex; index++) {
+      doneWeight += steps[index].weight;
+    }
+    final overall =
+        (doneWeight + steps[stepIndex].weight * (_stepFraction ?? 0)) /
+        _totalWeight;
+    if (overall > _overall) {
+      _overall = overall;
+    }
+
+    return ToolInstallProgress(
+      target: target,
+      progress: (_overall * 100).floor(),
+      remainingSeconds: remainingSeconds ?? _estimateRemainingSeconds(),
+      detail: detail,
+      steps: [for (final step in steps) step.title],
+      currentStep: stepIndex,
+      stepProgress: _stepFraction == null
+          ? null
+          : (_stepFraction! * 100).floor(),
+      cancellable: steps[stepIndex].cancellable,
+    );
+  }
+
+  int? _estimateRemainingSeconds() {
+    final elapsed = _stopwatch.elapsed.inSeconds;
+    if (_overall < 0.03 || elapsed < 5) {
+      return null;
+    }
+    return (elapsed * (1 - _overall) / _overall).round();
+  }
+}
+
+Map<String, List<String>> _mergePackages(
+  Map<String, List<String>> first,
+  Map<String, List<String>> second,
+) {
+  return {
+    for (final manager in {...first.keys, ...second.keys})
+      manager: {...?first[manager], ...?second[manager]}.toList(),
+  };
+}
+
+/// Everything the flutter tool needs on Linux besides the SDK checkout.
+const _commonPackages = {
+  'dnf': ['git', 'curl', 'unzip', 'xz', 'which', 'zip'],
+  'apt-get': ['git', 'curl', 'unzip', 'xz-utils', 'zip'],
+  'zypper': ['git', 'curl', 'unzip', 'xz', 'which', 'zip'],
+  'pacman': ['git', 'curl', 'unzip', 'xz', 'which', 'zip'],
+};
+
+const _rpmHostPackages = {
+  'dnf': ['git', 'clang', 'cmake', 'ninja-build', 'gtk3-devel', 'rpm-build'],
+  'apt-get': ['git', 'clang', 'cmake', 'ninja-build', 'libgtk-3-dev', 'rpm'],
+  'zypper': ['git', 'clang', 'cmake', 'ninja', 'gtk3-devel', 'rpm-build'],
+  'pacman': ['git', 'clang', 'cmake', 'ninja', 'gtk3', 'rpm-tools'],
+};
+
+const _debHostPackages = {
+  'dnf': ['clang', 'cmake', 'ninja-build', 'gtk3-devel', 'dpkg-dev'],
+  'apt-get': [
+    'git',
+    'clang',
+    'cmake',
+    'ninja-build',
+    'libgtk-3-dev',
+    'dpkg-dev',
+  ],
+  'zypper': ['git', 'clang', 'cmake', 'ninja', 'gtk3-devel', 'dpkg'],
+  'pacman': ['git', 'clang', 'cmake', 'ninja', 'gtk3', 'dpkg'],
+};
+
+const _tarGzHostPackages = {
+  'dnf': ['git', 'clang', 'cmake', 'ninja-build', 'gtk3-devel', 'tar'],
+  'apt-get': ['git', 'clang', 'cmake', 'ninja-build', 'libgtk-3-dev', 'tar'],
+  'zypper': ['git', 'clang', 'cmake', 'ninja', 'gtk3-devel', 'tar'],
+  'pacman': ['git', 'clang', 'cmake', 'ninja', 'gtk3', 'tar'],
+};
+
+const _appImageHostPackages = {
+  'dnf': ['git', 'clang', 'cmake', 'ninja-build', 'gtk3-devel'],
+  'apt-get': ['git', 'clang', 'cmake', 'ninja-build', 'libgtk-3-dev'],
+  'zypper': ['git', 'clang', 'cmake', 'ninja', 'gtk3-devel'],
+  'pacman': ['git', 'clang', 'cmake', 'ninja', 'gtk3'],
+};
+
+const _windowsKitPackages = {
+  'dnf': ['zip'],
+  'apt-get': ['zip'],
+  'zypper': ['zip'],
+  'pacman': ['zip'],
+};
+
+const _androidHostPackages = {
+  'dnf': ['git', 'unzip', 'java-latest-openjdk-devel'],
+  'apt-get': ['git', 'unzip', 'openjdk-17-jdk'],
+  'zypper': ['git', 'unzip', 'java-17-openjdk-devel'],
+  'pacman': ['git', 'unzip', 'jdk17-openjdk'],
+};
