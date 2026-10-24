@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -44,10 +45,7 @@ void main() {
     await tester.tap(find.text('Build'));
     await tester.pump();
     expect(find.text('0 selected targets'), findsOneWidget);
-    expect(
-      find.widgetWithText(FilledButton, 'Build installers'),
-      findsOneWidget,
-    );
+    expect(find.bySubtype<FilledButton>(), findsOneWidget);
   });
 
   test('creates a pending roadmap preview from selected targets', () {
@@ -165,6 +163,10 @@ void main() {
   testWidgets('shows roadmap before starting the selected build', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
     await tester.pumpWidget(
       const PackFoundryApp(enableToolchainDiagnostics: false),
     );
@@ -179,27 +181,13 @@ void main() {
     await tester.tap(find.text('Build'));
     await tester.pump();
 
-    expect(find.text('Full'), findsOneWidget);
-    expect(find.text('Simplified'), findsOneWidget);
-    expect(find.text('Create AppDir'), findsOneWidget);
-    expect(find.text('Create AppRun'), findsOneWidget);
-    expect(find.text('Resolve dependencies'), findsOneWidget);
-    expect(find.text('Locate bundle'), findsOneWidget);
-    expect(find.byType(LinearProgressIndicator), findsNothing);
-
-    await tester.ensureVisible(find.text('Simplified'));
-    await tester.tap(find.text('Simplified'));
-    await tester.pump();
-
-    expect(find.text('Create AppDir'), findsNothing);
-    expect(find.text('Create AppRun'), findsNothing);
+    expect(find.text('Build plan'), findsOneWidget);
+    expect(find.text('Process log'), findsOneWidget);
     expect(find.text('APPIMAGE'), findsOneWidget);
     expect(find.text('Flutter build'), findsOneWidget);
-
-    await tester.ensureVisible(find.text('Commands'));
-    await tester.tap(find.text('Commands'));
-    await tester.pump();
-
+    expect(find.text('Full'), findsNothing);
+    expect(find.text('Simplified'), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(
       find.text(
         'Select a Flutter project so PackFoundry can resolve real paths and names.',
@@ -218,6 +206,22 @@ void main() {
       selected: true,
     );
     final steps = BuildService().createRoadmapPlan([target]);
+    String? clipboardText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          clipboardText = (call.arguments as Map)['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
 
     await tester.pumpWidget(
       MaterialApp(
@@ -262,21 +266,33 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Commands'));
-    await tester.pump();
-
+    // The first step is selected before the build starts.
+    expect(find.text('Commands · Project'), findsOneWidget);
     expect(find.text("PROJECT='/home/user/Hash Checker'"), findsOneWidget);
     expect(find.text("EXPORT='/home/user/Packages'"), findsOneWidget);
     expect(find.text("APP_NAME='Hash Checker'"), findsOneWidget);
     expect(find.text("VERSION='2.1.1'"), findsOneWidget);
+    expect(find.text('flutter build linux --release'), findsNothing);
+
+    await tester.tap(find.text('Flutter build'));
+    await tester.pump();
+
+    expect(find.text('Commands · Flutter build'), findsOneWidget);
     expect(find.text('flutter build linux --release'), findsOneWidget);
-    expect(find.textContaining('<project>'), findsNothing);
-    expect(find.textContaining('<app>'), findsNothing);
+    expect(find.text("PROJECT='/home/user/Hash Checker'"), findsNothing);
     final commands = tester
         .widgetList<SelectableText>(find.byType(SelectableText))
         .map((widget) => widget.data ?? '')
         .toList();
     expect(commands.any((command) => command.contains(r'\"')), isFalse);
+
+    await tester.tap(find.text('Full script'));
+    await tester.pump();
+
+    expect(clipboardText, startsWith('#!/usr/bin/env bash'));
+    expect(clipboardText, contains("PROJECT='/home/user/Hash Checker'"));
+    expect(clipboardText, contains('flutter build linux --release'));
+    expect(clipboardText, isNot(contains('<project>')));
   });
 
   testWidgets('remembers release metadata fields', (tester) async {
@@ -436,18 +452,12 @@ void main() {
       ),
     );
 
-    expect(find.text('Подготовка очистки'), findsOneWidget);
-    expect(find.text('Удаление workspace'), findsOneWidget);
-    expect(find.text('Визуально'), findsOneWidget);
-    expect(find.text('Команды'), findsOneWidget);
-    expect(find.text('Полное'), findsOneWidget);
-    expect(find.text('Упрощенное'), findsOneWidget);
-    expect(
-      find.text('Возвращаем владельца файлов после контейнерной сборки.'),
-      findsOneWidget,
-    );
+    expect(find.text('План сборки'), findsOneWidget);
+    expect(find.text('Журнал процессов'), findsOneWidget);
+    expect(find.text('Очистка'), findsOneWidget);
+    expect(find.text('Команды · Очистка'), findsOneWidget);
     expect(find.text('Временные файлы удалены.'), findsOneWidget);
-    expect(find.text('Обычно: ~2 мин'), findsWidgets);
+    expect(find.textContaining('Обычно: ~3 мин'), findsOneWidget);
   });
 
   testWidgets('shows estimated remaining build time', (tester) async {
@@ -513,7 +523,7 @@ void main() {
     expect(find.text('Remaining: ~4 min'), findsOneWidget);
   });
 
-  testWidgets('auto-expands the current running roadmap card', (tester) async {
+  testWidgets('selects the running step and follows the build', (tester) async {
     Widget buildPanel(List<BuildRoadmapStep> steps) {
       return MaterialApp(
         localizationsDelegates: const [
@@ -567,11 +577,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('What happens'), findsOneWidget);
-    expect(
-      find.textContaining('PackFoundry tracks this technical action'),
-      findsOneWidget,
-    );
+    expect(find.text('Commands · Flutter build'), findsOneWidget);
 
     await tester.pumpWidget(
       buildPanel(const [
@@ -598,11 +604,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('What happens'), findsOneWidget);
-    expect(
-      find.textContaining('PackFoundry tracks this technical action'),
-      findsOneWidget,
-    );
+    expect(find.text('Commands · Cleanup'), findsOneWidget);
   });
 
   testWidgets('holds fast roadmap completion briefly before final state', (
@@ -672,9 +674,11 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsNothing);
   });
 
-  testWidgets('expands one roadmap card at a time', (tester) async {
-    await tester.pumpWidget(
-      MaterialApp(
+  testWidgets('keeps a step picked by the user while it is running', (
+    tester,
+  ) async {
+    Widget buildPanel(int cleanupProgress) {
+      return MaterialApp(
         localizationsDelegates: const [
           AppLocalizations.delegate,
           GlobalMaterialLocalizations.delegate,
@@ -688,7 +692,7 @@ void main() {
               selectedTargets: 1,
               isBuilding: true,
               progress: 25,
-              roadmapSteps: const [
+              roadmapSteps: [
                 BuildRoadmapStep(
                   id: 'cleanup',
                   number: 1,
@@ -696,10 +700,10 @@ void main() {
                   description:
                       'Remove temporary workspaces. Docker builds may contain many generated files.',
                   state: BuildRoadmapStepState.running,
-                  progress: 40,
+                  progress: cleanupProgress,
                   estimatedSeconds: 180,
                 ),
-                BuildRoadmapStep(
+                const BuildRoadmapStep(
                   id: 'rpm',
                   number: 2,
                   title: 'RPM',
@@ -718,31 +722,47 @@ void main() {
             ),
           ),
         ),
-      ),
+      );
+    }
+
+    await tester.pumpWidget(buildPanel(40));
+    expect(find.text('Commands · Cleanup'), findsOneWidget);
+
+    await tester.tap(find.text('RPM'));
+    await tester.pump();
+    expect(find.text('Commands · RPM'), findsOneWidget);
+
+    await tester.pumpWidget(buildPanel(60));
+    await tester.pump();
+    expect(find.text('Commands · RPM'), findsOneWidget);
+  });
+
+  testWidgets('fits the build workspace into the window', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      const PackFoundryApp(enableToolchainDiagnostics: false),
     );
+    await tester.pump();
+    await tester.pump();
 
-    expect(find.text('What happens'), findsOneWidget);
-    expect(
-      find.textContaining('PackFoundry tracks this technical action'),
-      findsOneWidget,
-    );
+    final appImageTarget = find.text('appimage');
+    await tester.ensureVisible(appImageTarget);
+    await tester.tap(appImageTarget);
+    await tester.pump();
+    await tester.tap(find.text('Build'));
+    await tester.pump();
 
-    await tester.tap(find.text('Prepare cleanup'));
-    await tester.pumpAndSettle();
-    expect(find.text('What happens'), findsNothing);
-
-    await tester.ensureVisible(find.text('RPM tree'));
-    await tester.tap(find.text('RPM tree'));
-    await tester.pumpAndSettle();
-    expect(find.text('What happens'), findsOneWidget);
-    expect(
-      find.textContaining('Create the rpmbuild directory structure'),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.text('RPM tree'));
-    await tester.pumpAndSettle();
-    expect(find.text('What happens'), findsNothing);
+    final screen = Offset.zero & const Size(1280, 800);
+    final plan = tester.getRect(find.text('Build plan'));
+    final log = tester.getRect(find.text('Process log'));
+    expect(screen.contains(plan.center), isTrue);
+    expect(screen.contains(log.center), isTrue);
+    // Plan and console sit side by side rather than one under the other.
+    expect(log.left, greaterThan(plan.right));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('uses Russian system locale when available', (tester) async {
@@ -764,7 +784,10 @@ void main() {
     await tester.tap(find.text('Сборка'));
     await tester.pump();
     expect(
-      find.widgetWithText(FilledButton, 'Собрать установщики'),
+      find.ancestor(
+        of: find.text('Собрать'),
+        matching: find.bySubtype<FilledButton>(),
+      ),
       findsOneWidget,
     );
   });

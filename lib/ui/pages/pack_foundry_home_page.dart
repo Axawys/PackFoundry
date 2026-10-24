@@ -3184,6 +3184,26 @@ class _WorkspaceContent extends StatelessWidget {
       ],
     };
 
+    if (index == 2) {
+      // The build workspace fills the window so the plan, commands and log
+      // are visible together; it only scrolls when the window is very short.
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          const minHeight = 560.0;
+          final panel = Padding(
+            padding: const EdgeInsets.all(24),
+            child: children.single,
+          );
+          if (constraints.maxHeight >= minHeight) {
+            return panel;
+          }
+          return SingleChildScrollView(
+            child: SizedBox(height: minHeight, child: panel),
+          );
+        },
+      );
+    }
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(

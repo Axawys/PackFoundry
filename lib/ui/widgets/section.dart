@@ -5,12 +5,17 @@ class Section extends StatelessWidget {
     required this.title,
     required this.icon,
     required this.child,
+    this.expand = false,
     super.key,
   });
 
   final String title;
   final IconData icon;
   final Widget child;
+
+  /// Stretches [child] over the remaining height when the section is placed in
+  /// a bounded parent instead of a scroll view.
+  final bool expand;
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +38,7 @@ class Section extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            child,
+            if (expand) Expanded(child: child) else child,
           ],
         ),
       ),

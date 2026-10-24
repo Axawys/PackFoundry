@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/models/build_configuration.dart';
 import '../../core/models/build_log_entry.dart';
@@ -8,6 +9,8 @@ import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
 import 'section.dart';
 
+/// Build workspace: the step plan on one side and, on the other, the shell
+/// commands of the selected step together with the live process log.
 class BuildPanel extends StatefulWidget {
   const BuildPanel({
     required this.selectedTargets,
@@ -40,193 +43,208 @@ class BuildPanel extends StatefulWidget {
   State<BuildPanel> createState() => _BuildPanelState();
 }
 
-enum _BuildDisplayMode { visual, commands }
-
-enum _VisualRoadmapMode { full, simplified }
-
 class _BuildPanelState extends State<BuildPanel> {
-  _BuildDisplayMode _displayMode = _BuildDisplayMode.visual;
-  _VisualRoadmapMode _visualMode = _VisualRoadmapMode.simplified;
+  /// Height of the split view when the panel is placed in a scrollable parent
+  /// and cannot simply fill the viewport.
+  static const _fallbackBodyHeight = 640.0;
+  static const _sideBySideMinWidth = 860.0;
+
+  String? _selectedStepId;
+  String? _lastRunningStepId;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncSelection();
+  }
+
+  @override
+  void didUpdateWidget(BuildPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncSelection();
+  }
+
+  /// Follows the running step, but keeps a step the user picked until the
+  /// build moves on to the next one.
+  void _syncSelection() {
+    final steps = widget.roadmapSteps;
+    String? runningStepId;
+    for (final step in steps) {
+      if (step.state == BuildRoadmapStepState.running) {
+        runningStepId = step.id;
+        break;
+      }
+    }
+    if (runningStepId != null && runningStepId != _lastRunningStepId) {
+      _selectedStepId = runningStepId;
+    }
+    _lastRunningStepId = runningStepId;
+
+    final selectionExists = steps.any((step) => step.id == _selectedStepId);
+    if (!selectionExists) {
+      _selectedStepId = steps.isEmpty ? null : steps.first.id;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bounded = constraints.hasBoundedHeight;
+        final body = _buildBody(constraints.maxWidth);
+        return Section(
+          title: context.l10n.build,
+          icon: Icons.play_circle_outline,
+          expand: bounded,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildToolbar(context),
+              const SizedBox(height: 16),
+              if (bounded)
+                Expanded(child: body)
+              else
+                SizedBox(height: _fallbackBodyHeight, child: body),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildToolbar(BuildContext context) {
     final l10n = context.l10n;
     final remainingSeconds = _estimatedRemainingSeconds(widget.roadmapSteps);
-    final hasWarning = widget.log.any(
-      (entry) => entry.state == BuildLogState.warning,
-    );
 
-    return Section(
-      title: l10n.build,
-      icon: Icons.play_circle_outline,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Wrap(
-              spacing: 10,
-              runSpacing: 8,
-              children: [
-                FilledButton.icon(
-                  onPressed:
-                      widget.isBuilding ||
-                          widget.isRunning ||
-                          widget.selectedTargets == 0
-                      ? null
-                      : widget.onBuild,
-                  icon: Icon(
-                    widget.isBuilding
-                        ? Icons.hourglass_top_outlined
-                        : Icons.rocket_launch_outlined,
-                  ),
-                  label: Text(
-                    widget.isBuilding ? l10n.building : l10n.buildInstallers,
-                  ),
-                ),
-                if (widget.canRun)
-                  OutlinedButton.icon(
-                    onPressed: widget.isBuilding
-                        ? null
-                        : widget.isRunning
-                        ? widget.onStop
-                        : widget.onRun,
-                    icon: Icon(
-                      widget.isRunning
-                          ? Icons.stop_circle_outlined
-                          : Icons.play_arrow_outlined,
-                    ),
-                    label: Text(
-                      widget.isRunning
-                          ? l10n.stopRunningApp
-                          : l10n.runWithoutBuild,
-                    ),
-                  ),
-              ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: 10,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            FilledButton.icon(
+              onPressed:
+                  widget.isBuilding ||
+                      widget.isRunning ||
+                      widget.selectedTargets == 0
+                  ? null
+                  : widget.onBuild,
+              icon: Icon(
+                widget.isBuilding
+                    ? Icons.hourglass_top_outlined
+                    : Icons.rocket_launch_outlined,
+              ),
+              label: Text(
+                widget.isBuilding ? l10n.building : l10n.buildInstallers,
+              ),
             ),
-          ),
-          if (widget.isRunning) ...[
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: _BuildStatusChip(
+            if (widget.canRun)
+              OutlinedButton.icon(
+                onPressed: widget.isBuilding
+                    ? null
+                    : widget.isRunning
+                    ? widget.onStop
+                    : widget.onRun,
+                icon: Icon(
+                  widget.isRunning
+                      ? Icons.stop_circle_outlined
+                      : Icons.play_arrow_outlined,
+                ),
+                label: Text(
+                  widget.isRunning ? l10n.stopRunningApp : l10n.runWithoutBuild,
+                ),
+              ),
+            if (widget.isRunning)
+              _BuildStatusChip(
                 icon: Icons.play_circle_outline,
                 label: l10n.runningApp,
               ),
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Text(
+                l10n.selectedTargets(widget.selectedTargets),
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
             ),
           ],
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 10,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
+        ),
+        if (widget.isBuilding || widget.progress > 0) ...[
+          const SizedBox(height: 12),
+          Row(
             children: [
-              SegmentedButton<_BuildDisplayMode>(
-                segments: [
-                  ButtonSegment(
-                    value: _BuildDisplayMode.visual,
-                    label: Text(l10n.visualBuildMode),
-                    icon: const Icon(Icons.account_tree_outlined),
-                  ),
-                  ButtonSegment(
-                    value: _BuildDisplayMode.commands,
-                    label: Text(l10n.commandsBuildMode),
-                    icon: const Icon(Icons.terminal_outlined),
-                  ),
-                ],
-                selected: {_displayMode},
-                onSelectionChanged: (selection) {
-                  setState(() {
-                    _displayMode = selection.single;
-                  });
-                },
-              ),
-              if (_displayMode == _BuildDisplayMode.visual)
-                SegmentedButton<_VisualRoadmapMode>(
-                  segments: [
-                    ButtonSegment(
-                      value: _VisualRoadmapMode.full,
-                      label: Text(l10n.fullRoadmapMode),
-                      icon: const Icon(Icons.view_agenda_outlined),
-                    ),
-                    ButtonSegment(
-                      value: _VisualRoadmapMode.simplified,
-                      label: Text(l10n.simplifiedRoadmapMode),
-                      icon: const Icon(Icons.view_list_outlined),
-                    ),
-                  ],
-                  selected: {_visualMode},
-                  onSelectionChanged: (selection) {
-                    setState(() {
-                      _visualMode = selection.single;
-                    });
-                  },
+              Expanded(
+                child: LinearProgressIndicator(
+                  value: widget.progress / 100,
+                  minHeight: 8,
+                  borderRadius: BorderRadius.circular(8),
                 ),
+              ),
+              const SizedBox(width: 12),
+              _BuildStatusChip(
+                icon: Icons.percent,
+                label: l10n.overallProgressLabel(widget.progress),
+              ),
+              if (widget.isBuilding && remainingSeconds != null) ...[
+                const SizedBox(width: 8),
+                _BuildStatusChip(
+                  icon: Icons.schedule_outlined,
+                  label: l10n.buildRemainingTime(remainingSeconds),
+                ),
+              ],
             ],
           ),
-          const SizedBox(height: 16),
-          Text(
-            l10n.selectedTargets(widget.selectedTargets),
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 12),
-          if (widget.isBuilding || widget.progress > 0) ...[
-            LinearProgressIndicator(
-              value: widget.progress / 100,
-              minHeight: 8,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 10,
-              runSpacing: 6,
-              children: [
-                _BuildStatusChip(
-                  icon: Icons.percent,
-                  label: l10n.overallProgressLabel(widget.progress),
-                ),
-                if (widget.isBuilding && remainingSeconds != null)
-                  _BuildStatusChip(
-                    icon: Icons.schedule_outlined,
-                    label: l10n.buildRemainingTime(remainingSeconds),
-                  ),
-              ],
-            ),
-          ],
-          if (widget.roadmapSteps.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            if (_displayMode == _BuildDisplayMode.visual)
-              _BuildRoadmap(steps: _visualRoadmapSteps(widget.roadmapSteps))
-            else
-              _BuildCommands(
-                steps: widget.roadmapSteps,
-                configuration: widget.configuration,
-              ),
-          ] else if (_displayMode == _BuildDisplayMode.commands) ...[
-            const SizedBox(height: 16),
-            Text(
-              l10n.noBuildCommands,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-          if (widget.log.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            ExpansionTile(
-              // Re-keyed on the warning flag so the tile is rebuilt expanded as
-              // soon as a step fails: a collapsed log hid every build error.
-              key: ValueKey(hasWarning),
-              tilePadding: EdgeInsets.zero,
-              title: Text(l10n.technicalLog),
-              initiallyExpanded: hasWarning,
-              children: [
-                for (final entry in widget.log) _LogEntryTile(entry: entry),
-              ],
-            ),
-          ],
         ],
-      ),
+      ],
+    );
+  }
+
+  Widget _buildBody(double width) {
+    final steps = widget.roadmapSteps;
+    BuildRoadmapStep? selectedStep;
+    for (final step in steps) {
+      if (step.id == _selectedStepId) {
+        selectedStep = step;
+      }
+    }
+    final configuration = widget.configuration;
+    final commandPlan =
+        configuration == null || configuration.projectPath.trim().isEmpty
+        ? null
+        : _BuildCommandPlan(configuration, steps);
+
+    final plan = _BuildPlanPane(
+      steps: steps,
+      selectedStepId: _selectedStepId,
+      onSelect: (stepId) => setState(() => _selectedStepId = stepId),
+    );
+    final console = _BuildConsole(
+      steps: steps,
+      selectedStep: selectedStep,
+      commandPlan: commandPlan,
+      log: widget.log,
+    );
+
+    if (width >= _sideBySideMinWidth) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(flex: 2, child: plan),
+          const SizedBox(width: 16),
+          Expanded(flex: 3, child: console),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(flex: 2, child: plan),
+        const SizedBox(height: 12),
+        Expanded(flex: 3, child: console),
+      ],
     );
   }
 
@@ -257,414 +275,866 @@ class _BuildPanelState extends State<BuildPanel> {
 
     return total.round();
   }
-
-  List<BuildRoadmapStep> _expandVisualRoadmap(
-    List<BuildRoadmapStep> parentSteps,
-  ) {
-    final result = <BuildRoadmapStep>[];
-    var number = 1;
-    for (final parent in parentSteps) {
-      final definitions =
-          _visualSubsteps[parent.id] ??
-          [_VisualSubstep(parent.id, parent.title, parent.description)];
-      for (var index = 0; index < definitions.length; index++) {
-        final definition = definitions[index];
-        final start = index * 100 / definitions.length;
-        final end = (index + 1) * 100 / definitions.length;
-        final state = _substepState(parent, index, definitions.length, end);
-        final progress = state == BuildRoadmapStepState.running
-            ? (((parent.progress - start) / (end - start)) * 100)
-                  .clamp(0, 100)
-                  .round()
-            : state == BuildRoadmapStepState.success
-            ? 100
-            : 0;
-        result.add(
-          BuildRoadmapStep(
-            id: definition.id,
-            number: number++,
-            title: definition.title,
-            description: definition.description,
-            state: state,
-            progress: progress,
-            estimatedSeconds: parent.estimatedSeconds == null
-                ? null
-                : (parent.estimatedSeconds! / definitions.length).ceil(),
-            detail:
-                state == BuildRoadmapStepState.running ||
-                    (parent.state != BuildRoadmapStepState.running &&
-                        index == definitions.length - 1)
-                ? parent.detail
-                : null,
-          ),
-        );
-      }
-    }
-    return result;
-  }
-
-  List<BuildRoadmapStep> _visualRoadmapSteps(
-    List<BuildRoadmapStep> parentSteps,
-  ) {
-    return switch (_visualMode) {
-      _VisualRoadmapMode.full => _expandVisualRoadmap(parentSteps),
-      _VisualRoadmapMode.simplified => parentSteps,
-    };
-  }
-
-  BuildRoadmapStepState _substepState(
-    BuildRoadmapStep parent,
-    int index,
-    int count,
-    double end,
-  ) {
-    return switch (parent.state) {
-      BuildRoadmapStepState.pending => BuildRoadmapStepState.pending,
-      BuildRoadmapStepState.running =>
-        parent.progress >= end
-            ? BuildRoadmapStepState.success
-            : parent.progress >= index * 100 / count
-            ? BuildRoadmapStepState.running
-            : BuildRoadmapStepState.pending,
-      BuildRoadmapStepState.success => BuildRoadmapStepState.success,
-      BuildRoadmapStepState.warning =>
-        index == count - 1
-            ? BuildRoadmapStepState.warning
-            : BuildRoadmapStepState.success,
-      BuildRoadmapStepState.skipped => BuildRoadmapStepState.skipped,
-    };
-  }
 }
 
-class _VisualSubstep {
-  const _VisualSubstep(this.id, this.title, this.description);
+/// Shared frame of the two halves: a titled, bordered pane.
+class _Pane extends StatelessWidget {
+  const _Pane({required this.header, required this.child});
 
-  final String id;
-  final String title;
-  final String description;
-}
-
-const _visualSubsteps = <String, List<_VisualSubstep>>{
-  'project': [
-    _VisualSubstep(
-      'project:validate',
-      'Validate project',
-      'Check pubspec.yaml and project structure.',
-    ),
-    _VisualSubstep(
-      'project:metadata',
-      'Read metadata',
-      'Read version, name and release settings.',
-    ),
-    _VisualSubstep(
-      'project:export',
-      'Prepare export',
-      'Validate and create the export directory.',
-    ),
-  ],
-  'workspace': [
-    _VisualSubstep(
-      'workspace:create',
-      'Create workspace',
-      'Create an isolated temporary build directory.',
-    ),
-    _VisualSubstep(
-      'workspace:copy',
-      'Copy sources',
-      'Copy project files without generated caches.',
-    ),
-    _VisualSubstep(
-      'workspace:overrides',
-      'Apply settings',
-      'Apply window, icon and application-id overrides.',
-    ),
-  ],
-  'local-build': [
-    _VisualSubstep(
-      'local-build:dependencies',
-      'Resolve dependencies',
-      'Run Flutter dependency resolution.',
-    ),
-    _VisualSubstep(
-      'local-build:compile',
-      'Compile Flutter',
-      'Compile Dart code and Flutter assets in release mode.',
-    ),
-    _VisualSubstep(
-      'local-build:native',
-      'Link native runner',
-      'Build plugins and the native Linux runner.',
-    ),
-  ],
-  'bundle': [
-    _VisualSubstep(
-      'bundle:locate',
-      'Locate bundle',
-      'Find the generated release/bundle directory.',
-    ),
-    _VisualSubstep(
-      'bundle:executable',
-      'Find executable',
-      'Identify and validate the main executable.',
-    ),
-    _VisualSubstep(
-      'bundle:icon',
-      'Embed icon',
-      'Copy the selected window icon into the bundle.',
-    ),
-  ],
-  'rpm': [
-    _VisualSubstep(
-      'rpm:tree',
-      'RPM tree',
-      'Create the rpmbuild directory structure.',
-    ),
-    _VisualSubstep(
-      'rpm:metadata',
-      'RPM metadata',
-      'Create the desktop entry and package icon.',
-    ),
-    _VisualSubstep(
-      'rpm:spec',
-      'RPM spec',
-      'Generate package metadata and installation rules.',
-    ),
-    _VisualSubstep(
-      'rpm:build',
-      'Run rpmbuild',
-      'Build and validate the binary RPM package.',
-    ),
-    _VisualSubstep(
-      'rpm:export',
-      'Export RPM',
-      'Copy the RPM artifact to the export directory.',
-    ),
-  ],
-  'appimage': [
-    _VisualSubstep(
-      'appimage:appdir',
-      'Create AppDir',
-      'Create the AppImage filesystem layout.',
-    ),
-    _VisualSubstep(
-      'appimage:apprun',
-      'Create AppRun',
-      'Write the portable application launcher.',
-    ),
-    _VisualSubstep(
-      'appimage:desktop',
-      'Desktop integration',
-      'Add desktop metadata, id and icon.',
-    ),
-    _VisualSubstep(
-      'appimage:package',
-      'Run appimagetool',
-      'Compress AppDir into one AppImage file.',
-    ),
-    _VisualSubstep(
-      'appimage:export',
-      'Finalize AppImage',
-      'Mark the result executable and export it.',
-    ),
-  ],
-  'targz': [
-    _VisualSubstep(
-      'targz:archive',
-      'Create archive',
-      'Compress the release bundle with tar and gzip.',
-    ),
-    _VisualSubstep(
-      'targz:verify',
-      'Verify archive',
-      'Confirm the tar.gz artifact was exported.',
-    ),
-  ],
-  'deb-container': [
-    _VisualSubstep(
-      'deb-container:runtime',
-      'Container runtime',
-      'Resolve Docker or Podman.',
-    ),
-    _VisualSubstep(
-      'deb-container:image',
-      'DEB builder image',
-      'Verify the cached Debian builder image.',
-    ),
-    _VisualSubstep(
-      'deb-container:start',
-      'Start builder',
-      'Mount project, export and dependency cache volumes.',
-    ),
-  ],
-  'deb-build': [
-    _VisualSubstep(
-      'deb-build:dependencies',
-      'DEB dependencies',
-      'Resolve Flutter packages inside Debian.',
-    ),
-    _VisualSubstep(
-      'deb-build:compile',
-      'Compile in Debian',
-      'Build the Linux release bundle in the builder.',
-    ),
-    _VisualSubstep(
-      'deb-build:bundle',
-      'Locate DEB bundle',
-      'Find the builder release bundle and executable.',
-    ),
-  ],
-  'deb-package': [
-    _VisualSubstep(
-      'deb-package:layout',
-      'Debian layout',
-      'Create DEBIAN, /opt and desktop directories.',
-    ),
-    _VisualSubstep(
-      'deb-package:control',
-      'Control metadata',
-      'Write package version, dependencies and maintainer.',
-    ),
-    _VisualSubstep(
-      'deb-package:desktop',
-      'DEB integration',
-      'Install desktop entry and application icon.',
-    ),
-    _VisualSubstep(
-      'deb-package:build',
-      'Run dpkg-deb',
-      'Assemble the final Debian package.',
-    ),
-    _VisualSubstep(
-      'deb-package:export',
-      'Export DEB',
-      'Write the DEB artifact to the export directory.',
-    ),
-  ],
-  'windows-kit': [
-    _VisualSubstep(
-      'windows-kit:layout',
-      'Windows kit layout',
-      'Create project, scripts, Inno and assets folders.',
-    ),
-    _VisualSubstep(
-      'windows-kit:project',
-      'Copy Windows project',
-      'Copy the prepared Flutter project.',
-    ),
-    _VisualSubstep(
-      'windows-kit:scripts',
-      'Write Windows scripts',
-      'Generate PowerShell and Inno Setup configuration.',
-    ),
-    _VisualSubstep(
-      'windows-kit:archive',
-      'Archive Windows kit',
-      'Create the transferable Windows build zip.',
-    ),
-  ],
-  'android-build': [
-    _VisualSubstep(
-      'android-build:dependencies',
-      'Android dependencies',
-      'Resolve Flutter packages before the Android build.',
-    ),
-    _VisualSubstep(
-      'android-build:gradle',
-      'Gradle release build',
-      'Run Flutter and Gradle to compile the release APK.',
-    ),
-    _VisualSubstep(
-      'android-build:signing',
-      'APK signing',
-      'Let the Android toolchain sign the release APK.',
-    ),
-  ],
-  'apk-export': [
-    _VisualSubstep(
-      'apk-export:locate',
-      'Locate APK',
-      'Find the generated app-release.apk file.',
-    ),
-    _VisualSubstep(
-      'apk-export:copy',
-      'Export APK',
-      'Copy and rename the APK in the export directory.',
-    ),
-  ],
-  'summary': [
-    _VisualSubstep(
-      'summary:verify',
-      'Verify artifacts',
-      'Check generated files in the export directory.',
-    ),
-    _VisualSubstep(
-      'summary:report',
-      'Build summary',
-      'Report successful and failed package targets.',
-    ),
-  ],
-  'cleanup': [
-    _VisualSubstep(
-      'cleanup:ownership',
-      'Prepare cleanup',
-      'Restore temporary file ownership when required.',
-    ),
-    _VisualSubstep(
-      'cleanup:remove',
-      'Remove workspace',
-      'Delete temporary sources and packaging files.',
-    ),
-  ],
-};
-
-class _BuildCommands extends StatelessWidget {
-  const _BuildCommands({required this.steps, required this.configuration});
-
-  final List<BuildRoadmapStep> steps;
-  final BuildConfiguration? configuration;
+  final Widget header;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final configuration = this.configuration;
-    if (configuration == null || configuration.projectPath.trim().isEmpty) {
-      return Text(
-        context.l10n.selectProjectForCommands,
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLow,
+        border: Border.all(color: colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(7),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            header,
+            Divider(height: 1, color: colorScheme.outlineVariant),
+            Expanded(child: child),
+          ],
         ),
-      );
+      ),
+    );
+  }
+}
+
+class _PaneHeader extends StatelessWidget {
+  const _PaneHeader({
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    this.actions = const [],
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 48),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: colorScheme.onSurfaceVariant),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (subtitle != null && subtitle!.isNotEmpty)
+                    Text(
+                      subtitle!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            ...actions,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PaneMessage extends StatelessWidget {
+  const _PaneMessage(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BuildPlanPane extends StatefulWidget {
+  const _BuildPlanPane({
+    required this.steps,
+    required this.selectedStepId,
+    required this.onSelect,
+  });
+
+  final List<BuildRoadmapStep> steps;
+  final String? selectedStepId;
+  final ValueChanged<String> onSelect;
+
+  @override
+  State<_BuildPlanPane> createState() => _BuildPlanPaneState();
+}
+
+class _BuildPlanPaneState extends State<_BuildPlanPane> {
+  static const _minimumStepDisplayDuration = Duration(seconds: 1);
+  static const _nextStepDelay = Duration(milliseconds: 180);
+
+  late List<BuildRoadmapStep> _displayedSteps;
+  late List<BuildRoadmapStep> _targetSteps;
+  final _stepKeys = <String, GlobalKey>{};
+  Timer? _transitionTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _displayedSteps = List.of(widget.steps);
+    _targetSteps = List.of(widget.steps);
+  }
+
+  @override
+  void didUpdateWidget(_BuildPlanPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedStepId != widget.selectedStepId) {
+      _revealSelectedStep();
+    }
+    if (!_sameStepIds(_targetSteps, widget.steps)) {
+      _transitionTimer?.cancel();
+      _transitionTimer = null;
+      _targetSteps = List.of(widget.steps);
+      _displayedSteps = List.of(widget.steps);
+      return;
     }
 
-    final groups = <_CommandGroupData>[];
-    var nextCommandNumber = 1;
-    for (var index = 0; index < steps.length; index++) {
+    _targetSteps = List.of(widget.steps);
+    _advanceDisplayedSteps();
+  }
+
+  @override
+  void dispose() {
+    _transitionTimer?.cancel();
+    super.dispose();
+  }
+
+  void _revealSelectedStep() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final stepContext = _stepKeys[widget.selectedStepId]?.currentContext;
+      if (stepContext == null || !stepContext.mounted) {
+        return;
+      }
+      Scrollable.ensureVisible(
+        stepContext,
+        alignment: 0.3,
+        duration: const Duration(milliseconds: 200),
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+      );
+    });
+  }
+
+  /// Fast steps would flash by unnoticed, so each finished step is held in
+  /// its running state for a moment before it switches to the final state.
+  void _advanceDisplayedSteps() {
+    if (_transitionTimer?.isActive ?? false) {
+      return;
+    }
+    if (_stepsMatch(_displayedSteps, _targetSteps)) {
+      return;
+    }
+
+    for (var index = 0; index < _displayedSteps.length; index++) {
+      final displayed = _displayedSteps[index];
+      final target = _targetSteps[index];
+      if (_stepMatches(displayed, target)) {
+        continue;
+      }
+
+      if (_shouldHoldBeforeFinalState(displayed, target)) {
+        setState(() {
+          _displayedSteps[index] = displayed.copyWith(
+            state: BuildRoadmapStepState.running,
+            progress: 100,
+            detail: target.detail,
+          );
+        });
+        _transitionTimer = Timer(_minimumStepDisplayDuration, () {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _displayedSteps[index] = _targetSteps[index];
+          });
+          _transitionTimer = Timer(_nextStepDelay, () {
+            _transitionTimer = null;
+            if (mounted) {
+              _advanceDisplayedSteps();
+            }
+          });
+        });
+        return;
+      }
+
+      setState(() {
+        _displayedSteps[index] = target;
+      });
+      _advanceDisplayedSteps();
+      return;
+    }
+  }
+
+  bool _shouldHoldBeforeFinalState(
+    BuildRoadmapStep displayed,
+    BuildRoadmapStep target,
+  ) {
+    final targetIsFinal = switch (target.state) {
+      BuildRoadmapStepState.success ||
+      BuildRoadmapStepState.warning ||
+      BuildRoadmapStepState.skipped => true,
+      BuildRoadmapStepState.pending || BuildRoadmapStepState.running => false,
+    };
+    return targetIsFinal &&
+        displayed.state != target.state &&
+        displayed.state != BuildRoadmapStepState.skipped;
+  }
+
+  bool _sameStepIds(
+    List<BuildRoadmapStep> first,
+    List<BuildRoadmapStep> second,
+  ) {
+    if (first.length != second.length) {
+      return false;
+    }
+    for (var index = 0; index < first.length; index++) {
+      if (first[index].id != second[index].id) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _stepsMatch(
+    List<BuildRoadmapStep> first,
+    List<BuildRoadmapStep> second,
+  ) {
+    if (first.length != second.length) {
+      return false;
+    }
+    for (var index = 0; index < first.length; index++) {
+      if (!_stepMatches(first[index], second[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _stepMatches(BuildRoadmapStep first, BuildRoadmapStep second) {
+    return first.id == second.id &&
+        first.state == second.state &&
+        first.progress == second.progress &&
+        first.detail == second.detail;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final finished = _displayedSteps
+        .where(
+          (step) =>
+              step.state == BuildRoadmapStepState.success ||
+              step.state == BuildRoadmapStepState.skipped,
+        )
+        .length;
+
+    return _Pane(
+      header: _PaneHeader(
+        icon: Icons.account_tree_outlined,
+        title: l10n.buildPlanTitle,
+        actions: [
+          if (_displayedSteps.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Text(
+                '$finished / ${_displayedSteps.length}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+        ],
+      ),
+      child: _displayedSteps.isEmpty
+          ? _PaneMessage(l10n.noBuildPlan)
+          : ListView(
+              padding: const EdgeInsets.all(6),
+              children: [
+                for (final step in _displayedSteps)
+                  _PlanStepTile(
+                    key: _stepKeys.putIfAbsent(step.id, GlobalKey.new),
+                    step: step,
+                    selected: step.id == widget.selectedStepId,
+                    onTap: () => widget.onSelect(step.id),
+                  ),
+              ],
+            ),
+    );
+  }
+}
+
+class _PlanStepTile extends StatelessWidget {
+  const _PlanStepTile({
+    required this.step,
+    required this.selected,
+    required this.onTap,
+    super.key,
+  });
+
+  final BuildRoadmapStep step;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final running = step.state == BuildRoadmapStepState.running;
+    final failed = step.state == BuildRoadmapStepState.warning;
+    final detail = step.detail;
+    final showDetail =
+        (running || failed || selected) && detail != null && detail.isNotEmpty;
+
+    return Semantics(
+      selected: selected,
+      label: l10n.roadmapStatusLabel(step.state.name),
+      child: Material(
+        color: selected
+            ? colorScheme.surfaceContainerHighest
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(6),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(6),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    _StepIndicator(step: step),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        l10n.roadmapStepTitle(step.id, step.title),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.bodyMedium?.copyWith(
+                          fontWeight: running || selected
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                          color: step.state == BuildRoadmapStepState.pending
+                              ? colorScheme.onSurfaceVariant
+                              : null,
+                        ),
+                      ),
+                    ),
+                    if (running)
+                      Text(
+                        '${step.progress}%',
+                        style: textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                  ],
+                ),
+                if (running) ...[
+                  const SizedBox(height: 6),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 32),
+                    child: LinearProgressIndicator(
+                      value: step.progress.clamp(0, 100) / 100,
+                      minHeight: 4,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ],
+                if (showDetail) ...[
+                  const SizedBox(height: 4),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 32),
+                    child: Text(
+                      l10n.roadmapDetail(detail),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.bodySmall?.copyWith(
+                        color: failed
+                            ? context.status.problem
+                            : colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StepIndicator extends StatelessWidget {
+  const _StepIndicator({required this.step});
+
+  final BuildRoadmapStep step;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final indicator = switch (step.state) {
+      BuildRoadmapStepState.pending => DecoratedBox(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: colorScheme.outline, width: 1.5),
+        ),
+        child: Center(
+          child: Text(
+            step.number.toString(),
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ),
+      BuildRoadmapStepState.running => Padding(
+        padding: const EdgeInsets.all(2),
+        child: CircularProgressIndicator(
+          value: step.progress.clamp(0, 100) / 100,
+          strokeWidth: 2.5,
+          backgroundColor: colorScheme.outlineVariant,
+        ),
+      ),
+      BuildRoadmapStepState.success => Icon(
+        Icons.check_circle,
+        size: 22,
+        color: context.status.success,
+      ),
+      BuildRoadmapStepState.warning => Icon(
+        Icons.error,
+        size: 22,
+        color: context.status.problem,
+      ),
+      BuildRoadmapStepState.skipped => Icon(
+        Icons.remove_circle_outline,
+        size: 22,
+        color: colorScheme.outline,
+      ),
+    };
+    return SizedBox.square(dimension: 22, child: indicator);
+  }
+}
+
+class _BuildConsole extends StatefulWidget {
+  const _BuildConsole({
+    required this.steps,
+    required this.selectedStep,
+    required this.commandPlan,
+    required this.log,
+  });
+
+  final List<BuildRoadmapStep> steps;
+  final BuildRoadmapStep? selectedStep;
+
+  /// Null until a project is selected, because commands need real paths.
+  final _BuildCommandPlan? commandPlan;
+  final List<BuildLogEntry> log;
+
+  @override
+  State<_BuildConsole> createState() => _BuildConsoleState();
+}
+
+class _BuildConsoleState extends State<_BuildConsole> {
+  final _logController = ScrollController();
+
+  @override
+  void didUpdateWidget(_BuildConsole oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final logChanged =
+        oldWidget.log.length != widget.log.length ||
+        (widget.log.isNotEmpty &&
+            !identical(oldWidget.log.last, widget.log.last));
+    if (!logChanged) {
+      return;
+    }
+    // Stick to the newest entry unless the user scrolled up to read history.
+    final followTail =
+        !_logController.hasClients ||
+        _logController.position.pixels >=
+            _logController.position.maxScrollExtent - 48;
+    if (followTail) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_logController.hasClients) {
+          _logController.jumpTo(_logController.position.maxScrollExtent);
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _logController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _copy(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(context.l10n.copiedToClipboard)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final step = widget.selectedStep;
+    final plan = widget.commandPlan;
+    final commands = step == null || plan == null
+        ? const <String>[]
+        : plan.commandsFor(step.id);
+
+    return _Pane(
+      header: _PaneHeader(
+        icon: Icons.terminal_outlined,
+        title: step == null
+            ? l10n.buildCommandsTitle
+            : '${l10n.buildCommandsTitle} · ${l10n.roadmapStepTitle(step.id, step.title)}',
+        subtitle: step == null
+            ? null
+            : _withUsualDuration(
+                l10n,
+                l10n.roadmapStepDescription(step.id, step.description),
+                step.estimatedSeconds,
+              ),
+        actions: [
+          if (step != null)
+            Tooltip(
+              message: l10n.roadmapStepExpandedDetail(step.id),
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: const Padding(
+                padding: EdgeInsets.all(8),
+                child: Icon(Icons.info_outline, size: 18),
+              ),
+            ),
+          IconButton(
+            tooltip: l10n.copyStepCommands,
+            onPressed: commands.isEmpty
+                ? null
+                : () => _copy(commands.join('\n')),
+            icon: const Icon(Icons.copy_outlined, size: 18),
+          ),
+          TextButton.icon(
+            onPressed: plan == null || widget.steps.isEmpty
+                ? null
+                : () => _copy(plan.script(widget.steps, l10n)),
+            icon: const Icon(Icons.description_outlined, size: 18),
+            label: Text(l10n.copyFullScript),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(flex: 3, child: _buildCommands(context, step, plan)),
+          Divider(
+            height: 1,
+            color: Theme.of(context).colorScheme.outlineVariant,
+          ),
+          _PaneHeader(
+            icon: Icons.receipt_long_outlined,
+            title: l10n.processLogTitle,
+            actions: [
+              IconButton(
+                tooltip: l10n.copyLog,
+                onPressed: widget.log.isEmpty
+                    ? null
+                    : () => _copy(
+                        widget.log
+                            .map((entry) => '${entry.title}\n${entry.detail}')
+                            .join('\n\n'),
+                      ),
+                icon: const Icon(Icons.copy_outlined, size: 18),
+              ),
+            ],
+          ),
+          Expanded(
+            flex: 2,
+            // One selection area lets a whole error be selected and copied.
+            child: SelectionArea(
+              child: ListView.builder(
+                controller: _logController,
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+                itemCount: widget.log.length,
+                itemBuilder: (context, index) =>
+                    _LogEntryTile(entry: widget.log[index]),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCommands(
+    BuildContext context,
+    BuildRoadmapStep? step,
+    _BuildCommandPlan? plan,
+  ) {
+    final l10n = context.l10n;
+    if (step == null) {
+      return _PaneMessage(l10n.noBuildCommands);
+    }
+    if (plan == null) {
+      return _PaneMessage(l10n.selectProjectForCommands);
+    }
+    final commands = plan.commandsFor(step.id);
+    if (commands.isEmpty) {
+      return _PaneMessage(l10n.noStepCommands);
+    }
+
+    final colorScheme = Theme.of(context).colorScheme;
+    final firstNumber = plan.firstNumberFor(step.id);
+    return ListView.separated(
+      // A new step starts at its first command instead of the old offset.
+      key: PageStorageKey('commands:${step.id}'),
+      padding: const EdgeInsets.fromLTRB(8, 12, 14, 12),
+      itemCount: commands.length,
+      separatorBuilder: (context, index) => const SizedBox(height: 8),
+      itemBuilder: (context, index) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 34,
+            child: Text(
+              '${firstNumber + index}',
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12.5,
+                color: colorScheme.outline,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: SelectableText(
+              commands[index],
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12.5,
+                height: 1.35,
+                color: colorScheme.onSurface,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _withUsualDuration(
+    AppLocalizations l10n,
+    String description,
+    int? seconds,
+  ) {
+    if (seconds == null || seconds <= 0) {
+      return description;
+    }
+    final usual = seconds < 60
+        ? l10n.roadmapUsuallySeconds(seconds)
+        : l10n.roadmapUsuallyMinutes((seconds / 60).round());
+    return '$description · $usual';
+  }
+}
+
+class _BuildStatusChip extends StatelessWidget {
+  const _BuildStatusChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: colorScheme.onSurfaceVariant),
+            const SizedBox(width: 6),
+            Text(label, style: Theme.of(context).textTheme.bodySmall),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LogEntryTile extends StatelessWidget {
+  const _LogEntryTile({required this.entry});
+
+  final BuildLogEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final warning = entry.state == BuildLogState.warning;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Icon(
+              _entryIcon(entry.state),
+              color: _entryColor(context),
+              size: 16,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry.title,
+                  style: textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: warning ? context.status.problem : null,
+                  ),
+                ),
+                if (entry.detail.isNotEmpty)
+                  Text(
+                    entry.detail,
+                    // Errors stay readable in full; routine entries are kept
+                    // short so the log does not crowd the commands.
+                    maxLines: warning ? null : 3,
+                    overflow: warning ? null : TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      height: 1.35,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _entryIcon(BuildLogState state) {
+    return switch (state) {
+      BuildLogState.idle => Icons.radio_button_unchecked,
+      BuildLogState.running => Icons.sync,
+      BuildLogState.success => Icons.check_circle_outline,
+      BuildLogState.warning => Icons.warning_amber_outlined,
+    };
+  }
+
+  Color _entryColor(BuildContext context) {
+    return switch (entry.state) {
+      BuildLogState.idle => Theme.of(context).colorScheme.onSurfaceVariant,
+      BuildLogState.running => Theme.of(context).colorScheme.onSurfaceVariant,
+      BuildLogState.success => context.status.success,
+      BuildLogState.warning => context.status.problem,
+    };
+  }
+}
+
+/// Shell commands equivalent to the build plan, with real project values, so
+/// the build can be understood, reproduced or debugged by hand.
+class _BuildCommandPlan {
+  _BuildCommandPlan(this.configuration, List<BuildRoadmapStep> steps) {
+    var nextNumber = 1;
+    for (final step in steps) {
       final commands = _commandsForStep(
-        steps[index].id,
+        step.id,
         configuration,
       ).map(_normalizeCommand).toList();
+      _commands[step.id] = commands;
+      _firstNumbers[step.id] = nextNumber;
+      nextNumber += commands.length;
+    }
+  }
+
+  final BuildConfiguration configuration;
+  final _commands = <String, List<String>>{};
+  final _firstNumbers = <String, int>{};
+
+  List<String> commandsFor(String stepId) => _commands[stepId] ?? const [];
+
+  int firstNumberFor(String stepId) => _firstNumbers[stepId] ?? 1;
+
+  String script(List<BuildRoadmapStep> steps, AppLocalizations l10n) {
+    final buffer = StringBuffer('#!/usr/bin/env bash\n');
+    for (final step in steps) {
+      final commands = commandsFor(step.id);
       if (commands.isEmpty) {
         continue;
       }
-      groups.add(
-        _CommandGroupData(
-          step: steps[index],
-          commands: commands,
-          firstCommandNumber: nextCommandNumber,
-          color: Theme.of(context).colorScheme.outlineVariant,
-        ),
-      );
-      nextCommandNumber += commands.length;
+      buffer
+        ..writeln()
+        ..writeln(
+          '# ${step.number}. ${l10n.roadmapStepTitle(step.id, step.title)}',
+        );
+      for (final command in commands) {
+        buffer.writeln(command);
+      }
     }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (var index = 0; index < groups.length; index++) ...[
-          _CommandGroup(group: groups[index]),
-          if (index != groups.length - 1) const SizedBox(height: 10),
-        ],
-      ],
-    );
+    return buffer.toString();
   }
 
   List<String> _commandsForStep(
@@ -1093,714 +1563,5 @@ esac''',
       return trimmed.substring(1);
     }
     return trimmed;
-  }
-}
-
-class _CommandGroupData {
-  const _CommandGroupData({
-    required this.step,
-    required this.commands,
-    required this.firstCommandNumber,
-    required this.color,
-  });
-
-  final BuildRoadmapStep step;
-  final List<String> commands;
-  final int firstCommandNumber;
-  final Color color;
-}
-
-class _CommandGroup extends StatelessWidget {
-  const _CommandGroup({required this.group});
-
-  final _CommandGroupData group;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    final colorScheme = Theme.of(context).colorScheme;
-    final stateColor = _stateColor(context, group.step.state);
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(6),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: group.step.state == BuildRoadmapStepState.running
-              ? stateColor.withValues(alpha: 0.08)
-              : colorScheme.surfaceContainerLow,
-          border: Border.all(color: colorScheme.outlineVariant),
-        ),
-        child: IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              SizedBox(width: 5, child: ColoredBox(color: group.color)),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            _stateIcon(group.step.state),
-                            size: 18,
-                            color: stateColor,
-                          ),
-                          const SizedBox(width: 7),
-                          Expanded(
-                            child: Text(
-                              l10n.roadmapStepTitle(
-                                group.step.id,
-                                group.step.title,
-                              ),
-                              style: Theme.of(context).textTheme.titleSmall
-                                  ?.copyWith(fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        l10n.roadmapStepDescription(
-                          group.step.id,
-                          group.step.description,
-                        ),
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      for (
-                        var index = 0;
-                        index < group.commands.length;
-                        index++
-                      )
-                        Padding(
-                          padding: EdgeInsets.only(
-                            bottom: index == group.commands.length - 1 ? 0 : 7,
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SizedBox(
-                                width: 34,
-                                child: Text(
-                                  '${group.firstCommandNumber + index}.',
-                                  textAlign: TextAlign.right,
-                                  style: TextStyle(
-                                    fontFamily: 'monospace',
-                                    color: colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: SelectableText(
-                                  group.commands[index],
-                                  style: TextStyle(
-                                    fontFamily: 'monospace',
-                                    fontSize: 13,
-                                    color: colorScheme.onSurface,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  IconData _stateIcon(BuildRoadmapStepState state) {
-    return switch (state) {
-      BuildRoadmapStepState.pending => Icons.schedule_outlined,
-      BuildRoadmapStepState.running => Icons.sync,
-      BuildRoadmapStepState.success => Icons.check_circle_outline,
-      BuildRoadmapStepState.warning => Icons.error_outline,
-      BuildRoadmapStepState.skipped => Icons.skip_next_outlined,
-    };
-  }
-
-  Color _stateColor(BuildContext context, BuildRoadmapStepState state) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return switch (state) {
-      BuildRoadmapStepState.pending => colorScheme.onSurfaceVariant,
-      BuildRoadmapStepState.running => colorScheme.onSurfaceVariant,
-      BuildRoadmapStepState.success => context.status.success,
-      BuildRoadmapStepState.warning => context.status.problem,
-      BuildRoadmapStepState.skipped => colorScheme.onSurfaceVariant,
-    };
-  }
-}
-
-class _BuildStatusChip extends StatelessWidget {
-  const _BuildStatusChip({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 15, color: colorScheme.onSurfaceVariant),
-            const SizedBox(width: 6),
-            Text(label, style: Theme.of(context).textTheme.bodySmall),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _BuildRoadmap extends StatefulWidget {
-  const _BuildRoadmap({required this.steps});
-
-  final List<BuildRoadmapStep> steps;
-
-  @override
-  State<_BuildRoadmap> createState() => _BuildRoadmapState();
-}
-
-class _BuildRoadmapState extends State<_BuildRoadmap> {
-  static const _minimumStepDisplayDuration = Duration(seconds: 1);
-  static const _nextStepDelay = Duration(milliseconds: 180);
-
-  String? _expandedStepId;
-  String? _lastRunningStepId;
-  late List<BuildRoadmapStep> _displayedSteps;
-  late List<BuildRoadmapStep> _targetSteps;
-  Timer? _transitionTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    _displayedSteps = List.of(widget.steps);
-    _targetSteps = List.of(widget.steps);
-    _syncExpandedStepWithRunningStep();
-  }
-
-  @override
-  void didUpdateWidget(_BuildRoadmap oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!_sameStepIds(_targetSteps, widget.steps)) {
-      _transitionTimer?.cancel();
-      _transitionTimer = null;
-      _targetSteps = List.of(widget.steps);
-      _displayedSteps = List.of(widget.steps);
-      _syncExpandedStepWithRunningStep();
-      return;
-    }
-
-    _targetSteps = List.of(widget.steps);
-    _advanceDisplayedSteps();
-  }
-
-  @override
-  void dispose() {
-    _transitionTimer?.cancel();
-    super.dispose();
-  }
-
-  void _advanceDisplayedSteps() {
-    if (_transitionTimer?.isActive ?? false) {
-      return;
-    }
-    if (_stepsMatch(_displayedSteps, _targetSteps)) {
-      _syncExpandedStepWithRunningStep();
-      return;
-    }
-
-    for (var index = 0; index < _displayedSteps.length; index++) {
-      final displayed = _displayedSteps[index];
-      final target = _targetSteps[index];
-      if (_stepMatches(displayed, target)) {
-        continue;
-      }
-
-      if (_shouldHoldBeforeFinalState(displayed, target)) {
-        setState(() {
-          _displayedSteps[index] = displayed.copyWith(
-            state: BuildRoadmapStepState.running,
-            progress: 100,
-            detail: target.detail,
-          );
-          _syncExpandedStepWithRunningStep();
-        });
-        _transitionTimer = Timer(_minimumStepDisplayDuration, () {
-          if (!mounted) {
-            return;
-          }
-          setState(() {
-            _displayedSteps[index] = _targetSteps[index];
-            _syncExpandedStepWithRunningStep();
-          });
-          _transitionTimer = Timer(_nextStepDelay, () {
-            _transitionTimer = null;
-            if (mounted) {
-              _advanceDisplayedSteps();
-            }
-          });
-        });
-        return;
-      }
-
-      setState(() {
-        _displayedSteps[index] = target;
-        _syncExpandedStepWithRunningStep();
-      });
-      _advanceDisplayedSteps();
-      return;
-    }
-  }
-
-  bool _shouldHoldBeforeFinalState(
-    BuildRoadmapStep displayed,
-    BuildRoadmapStep target,
-  ) {
-    final targetIsFinal = switch (target.state) {
-      BuildRoadmapStepState.success ||
-      BuildRoadmapStepState.warning ||
-      BuildRoadmapStepState.skipped => true,
-      BuildRoadmapStepState.pending || BuildRoadmapStepState.running => false,
-    };
-    return targetIsFinal &&
-        displayed.state != target.state &&
-        displayed.state != BuildRoadmapStepState.skipped;
-  }
-
-  bool _sameStepIds(
-    List<BuildRoadmapStep> first,
-    List<BuildRoadmapStep> second,
-  ) {
-    if (first.length != second.length) {
-      return false;
-    }
-    for (var index = 0; index < first.length; index++) {
-      if (first[index].id != second[index].id) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  bool _stepsMatch(
-    List<BuildRoadmapStep> first,
-    List<BuildRoadmapStep> second,
-  ) {
-    if (first.length != second.length) {
-      return false;
-    }
-    for (var index = 0; index < first.length; index++) {
-      if (!_stepMatches(first[index], second[index])) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  bool _stepMatches(BuildRoadmapStep first, BuildRoadmapStep second) {
-    return first.id == second.id &&
-        first.state == second.state &&
-        first.progress == second.progress &&
-        first.detail == second.detail;
-  }
-
-  void _syncExpandedStepWithRunningStep() {
-    final runningStepId = _runningStepId();
-    if (runningStepId != null && runningStepId != _lastRunningStepId) {
-      _expandedStepId = runningStepId;
-    }
-    _lastRunningStepId = runningStepId;
-    if (_expandedStepId == null) {
-      return;
-    }
-    final stillExists = _displayedSteps.any(
-      (step) => step.id == _expandedStepId,
-    );
-    if (!stillExists) {
-      _expandedStepId = null;
-    }
-  }
-
-  String? _runningStepId() {
-    for (final step in _displayedSteps) {
-      if (step.state == BuildRoadmapStepState.running) {
-        return step.id;
-      }
-    }
-    return null;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final expandedWidth = constraints.maxWidth < 520
-            ? constraints.maxWidth
-            : 520.0;
-
-        return Wrap(
-          spacing: 10,
-          runSpacing: 12,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            for (var index = 0; index < _displayedSteps.length; index++) ...[
-              _RoadmapStepCard(
-                step: _displayedSteps[index],
-                expanded: _displayedSteps[index].id == _expandedStepId,
-                expandedWidth: expandedWidth,
-                onTap: () {
-                  setState(() {
-                    final stepId = _displayedSteps[index].id;
-                    _expandedStepId = _expandedStepId == stepId ? null : stepId;
-                  });
-                },
-              ),
-              if (index != _displayedSteps.length - 1)
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 180),
-                  child: Icon(
-                    Icons.arrow_forward,
-                    key: ValueKey(_displayedSteps[index].state),
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    size: 20,
-                  ),
-                ),
-            ],
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _RoadmapStepCard extends StatelessWidget {
-  const _RoadmapStepCard({
-    required this.step,
-    required this.expanded,
-    required this.expandedWidth,
-    required this.onTap,
-  });
-
-  final BuildRoadmapStep step;
-  final bool expanded;
-  final double expandedWidth;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = _stepColor(context);
-    final colorScheme = Theme.of(context).colorScheme;
-    final l10n = context.l10n;
-    final running = step.state == BuildRoadmapStepState.running;
-
-    return Semantics(
-      button: true,
-      label: expanded ? l10n.roadmapCollapseHint : l10n.roadmapExpandHint,
-      child: AnimatedContainer(
-        width: expanded ? expandedWidth : 235,
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOutCubic,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(8),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: expanded ? 0.15 : 0.10),
-                border: Border.all(color: color.withValues(alpha: 0.55)),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Padding(
-                padding: EdgeInsets.all(expanded ? 14 : 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 13,
-                          backgroundColor: color,
-                          child: Text(
-                            step.number.toString(),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            l10n.roadmapStepTitle(step.id, step.title),
-                            style: Theme.of(context).textTheme.titleSmall
-                                ?.copyWith(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                        Icon(_stepIcon(), color: color, size: 18),
-                        const SizedBox(width: 4),
-                        Icon(
-                          expanded
-                              ? Icons.keyboard_arrow_up
-                              : Icons.keyboard_arrow_down,
-                          color: colorScheme.onSurfaceVariant,
-                          size: 18,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      l10n.roadmapStepDescription(step.id, step.description),
-                    ),
-                    if (step.detail != null && step.detail!.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        l10n.roadmapDetail(step.detail!),
-                        maxLines: expanded ? null : 2,
-                        overflow: expanded
-                            ? TextOverflow.visible
-                            : TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                    if (running) ...[
-                      const SizedBox(height: 10),
-                      LinearProgressIndicator(
-                        value: step.progress.clamp(0, 100) / 100,
-                        minHeight: 6,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        _estimateText(context),
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                    AnimatedSize(
-                      duration: const Duration(milliseconds: 160),
-                      curve: Curves.easeOutCubic,
-                      alignment: Alignment.topCenter,
-                      child: expanded
-                          ? _ExpandedRoadmapDetails(
-                              step: step,
-                              running: running,
-                            )
-                          : const SizedBox.shrink(),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _estimateText(BuildContext context) {
-    final seconds = step.estimatedSeconds;
-    if (seconds == null) {
-      return context.l10n.roadmapRunning;
-    }
-    if (seconds < 60) {
-      return context.l10n.roadmapUsuallySeconds(seconds);
-    }
-    return context.l10n.roadmapUsuallyMinutes((seconds / 60).round());
-  }
-
-  IconData _stepIcon() {
-    return switch (step.state) {
-      BuildRoadmapStepState.pending => Icons.radio_button_unchecked,
-      BuildRoadmapStepState.running => Icons.sync,
-      BuildRoadmapStepState.success => Icons.check_circle_outline,
-      BuildRoadmapStepState.warning => Icons.error_outline,
-      BuildRoadmapStepState.skipped => Icons.skip_next_outlined,
-    };
-  }
-
-  Color _stepColor(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return switch (step.state) {
-      BuildRoadmapStepState.pending => colorScheme.outline,
-      BuildRoadmapStepState.running => colorScheme.onSurfaceVariant,
-      BuildRoadmapStepState.success => context.status.success,
-      BuildRoadmapStepState.warning => context.status.problem,
-      BuildRoadmapStepState.skipped => colorScheme.outline,
-    };
-  }
-}
-
-class _ExpandedRoadmapDetails extends StatelessWidget {
-  const _ExpandedRoadmapDetails({required this.step, required this.running});
-
-  final BuildRoadmapStep step;
-  final bool running;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    final textTheme = Theme.of(context).textTheme;
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Divider(color: colorScheme.outlineVariant),
-          const SizedBox(height: 6),
-          Text(
-            l10n.roadmapDetailsTitle,
-            style: textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            step.id.contains(':')
-                ? l10n.visualSubstepExpandedDetail
-                : l10n.roadmapStepExpandedDetail(step.id),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _RoadmapInfoChip(
-                icon: Icons.flag_outlined,
-                label: l10n.roadmapStatusLabel(step.state.name),
-              ),
-              _RoadmapInfoChip(
-                icon: Icons.percent,
-                label: l10n.roadmapProgressLabel(step.progress),
-              ),
-              if (running)
-                _RoadmapInfoChip(
-                  icon: Icons.timer_outlined,
-                  label: _estimateText(context),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _estimateText(BuildContext context) {
-    final seconds = step.estimatedSeconds;
-    if (seconds == null) {
-      return context.l10n.roadmapRunning;
-    }
-    if (seconds < 60) {
-      return context.l10n.roadmapUsuallySeconds(seconds);
-    }
-    return context.l10n.roadmapUsuallyMinutes((seconds / 60).round());
-  }
-}
-
-class _RoadmapInfoChip extends StatelessWidget {
-  const _RoadmapInfoChip({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 15, color: colorScheme.onSurfaceVariant),
-            const SizedBox(width: 5),
-            Flexible(
-              child: Text(
-                label,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _LogEntryTile extends StatelessWidget {
-  const _LogEntryTile({required this.entry});
-
-  final BuildLogEntry entry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(_entryIcon(entry.state), color: _entryColor(context), size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  entry.title,
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-                Text(entry.detail),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  IconData _entryIcon(BuildLogState state) {
-    return switch (state) {
-      BuildLogState.idle => Icons.radio_button_unchecked,
-      BuildLogState.running => Icons.sync,
-      BuildLogState.success => Icons.check_circle_outline,
-      BuildLogState.warning => Icons.warning_amber_outlined,
-    };
-  }
-
-  Color _entryColor(BuildContext context) {
-    return switch (entry.state) {
-      BuildLogState.idle => Theme.of(context).colorScheme.onSurfaceVariant,
-      BuildLogState.running => Theme.of(context).colorScheme.onSurfaceVariant,
-      BuildLogState.success => context.status.success,
-      BuildLogState.warning => context.status.problem,
-    };
   }
 }
