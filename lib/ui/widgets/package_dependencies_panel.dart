@@ -7,11 +7,13 @@ class PackageDependenciesPanel extends StatelessWidget {
   const PackageDependenciesPanel({
     required this.debController,
     required this.rpmController,
+    required this.pacmanController,
     super.key,
   });
 
   final TextEditingController debController;
   final TextEditingController rpmController;
+  final TextEditingController pacmanController;
 
   @override
   Widget build(BuildContext context) {
@@ -44,6 +46,12 @@ class PackageDependenciesPanel extends StatelessWidget {
                 title: 'RPM Requires',
                 hint: 'webkit2gtk4.1',
                 helper: l10n.rpmAdditionalDependenciesHelp,
+              ),
+              _DependencyField(
+                controller: pacmanController,
+                title: 'pacman depends',
+                hint: 'webkit2gtk-4.1',
+                helper: l10n.pacmanAdditionalDependenciesHelp,
               ),
             ],
           ),

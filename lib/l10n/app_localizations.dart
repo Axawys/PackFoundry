@@ -158,6 +158,7 @@ class AppLocalizations {
 
   String get debBuildGroupTitle => 'DEB';
   String get rpmBuildGroupTitle => 'RPM';
+  String get pacmanBuildGroupTitle => 'PACMAN';
   String get appImageBuildGroupTitle => 'APPIMAGE';
   String get tarGzBuildGroupTitle => 'TAR.GZ';
   String get windowsBuildGroupTitle => 'EXE';
@@ -278,12 +279,42 @@ class AppLocalizations {
         : '$distribution uses rpm, but Fedora/RHEL packages are not treated as compatible yet.';
   }
 
+  String pacmanBuildNativeSubtitle(String distribution) {
+    return _isRu
+        ? 'Нативный пакет pacman (.pkg.tar.zst) через makepkg для $distribution.'
+        : 'Native pacman package (.pkg.tar.zst) built with makepkg for $distribution.';
+  }
+
+  String pacmanBuildUnsupportedSubtitle(String distribution) {
+    return _isRu
+        ? 'Пакеты pacman собираются только на Arch-based системах, а это $distribution.'
+        : 'pacman packages are built only on Arch-based hosts; this is $distribution.';
+  }
+
+  String get makepkgNote => _isRu
+      ? 'Собирает пакет по PKGBUILD и записывает метаданные для pacman.'
+      : 'Builds the package from a PKGBUILD and writes the metadata pacman needs.';
+  String get fakerootNote => _isRu
+      ? 'Нужен makepkg, чтобы упаковать файлы от root без sudo. Входит в base-devel.'
+      : 'Lets makepkg package files as root without sudo. Part of base-devel.';
+  String get hostPacmanCompatibilityToolName =>
+      _isRu ? 'Совместимость pacman' : 'pacman compatibility';
+  String get hostPacmanCompatibilityToolNote => _isRu
+      ? 'Нужна Arch Linux или производная: Manjaro, EndeavourOS, CachyOS и т.п.'
+      : 'Requires Arch Linux or a derivative such as Manjaro, EndeavourOS or CachyOS.';
+  String get pacmanHostInstallUnsupported => _isRu
+      ? 'Пакеты pacman можно собрать только на Arch-based системе.'
+      : 'pacman packages can only be built on an Arch-based system.';
+  String get tarGzTargetHint => _isRu
+      ? 'Переносимый архив: распаковать и запустить, не пакет'
+      : 'Portable archive to unpack and run, not a package';
+
   String get appImageBuildGroupSubtitle => _isRu
       ? 'Сборка переносимого AppImage для Linux.'
       : 'Build a portable AppImage for Linux.';
   String get tarGzBuildGroupSubtitle => _isRu
-      ? 'Сборка переносимого tar.gz архива с Linux release bundle.'
-      : 'Build a portable tar.gz archive with the Linux release bundle.';
+      ? 'Переносимый tar.gz архив с Linux release bundle: его распаковывают и запускают. Пакетные менеджеры (pacman, apt, dnf) его не устанавливают.'
+      : 'Portable tar.gz archive with the Linux release bundle to unpack and run. Package managers (pacman, apt, dnf) cannot install it.';
   String get windowsBuildGroupSubtitle => _isRu
       ? 'PackFoundry создаёт zip-набор: проект, Inno Setup config и скрипт сборки для Windows.'
       : 'PackFoundry creates a zip kit with the project, Inno Setup config and Windows build script.';
@@ -385,6 +416,9 @@ class AppLocalizations {
       : 'One dependency per line. Alternatives with | are allowed.';
   String get rpmAdditionalDependenciesHelp =>
       _isRu ? 'Одна зависимость на строку.' : 'One dependency per line.';
+  String get pacmanAdditionalDependenciesHelp => _isRu
+      ? 'Одна зависимость на строку, имена пакетов Arch.'
+      : 'One dependency per line, Arch package names.';
   String get packageInspectorShort => _isRu ? 'Пакеты' : 'Packages';
   String get packageInspector =>
       _isRu ? 'Инспектор пакета' : 'Package Inspector';
@@ -615,6 +649,7 @@ class AppLocalizations {
       'local-build' => _isRu ? 'Flutter build' : 'Flutter build',
       'bundle' => _isRu ? 'Linux bundle' : 'Linux bundle',
       'rpm' => 'RPM',
+      'pacman' => 'PACMAN',
       'appimage' => 'APPIMAGE',
       'targz' => 'TAR.GZ',
       'deb-container' => _isRu ? 'DEB контейнер' : 'DEB container',
@@ -651,6 +686,10 @@ class AppLocalizations {
         _isRu
             ? 'Генерация spec-файла и запуск rpmbuild.'
             : 'Generate spec metadata and run rpmbuild.',
+      'pacman' =>
+        _isRu
+            ? 'Генерация PKGBUILD и запуск makepkg.'
+            : 'Generate a PKGBUILD and run makepkg.',
       'appimage' =>
         _isRu
             ? 'Создание AppDir, AppRun и упаковка через appimagetool.'
@@ -730,6 +769,9 @@ class AppLocalizations {
       'Preparing rpmbuild tree and package metadata.' =>
         'Готовим дерево rpmbuild и метаданные пакета.',
       'Creating compressed release bundle.' => 'Создаём сжатый release bundle.',
+      'Preparing PKGBUILD and package metadata.' =>
+        'Готовим PKGBUILD и метаданные пакета.',
+      'Running makepkg.' => 'Запускаем makepkg.',
       'apt-get update inside debian:bookworm.' =>
         'Выполняем apt-get update внутри debian:bookworm.',
       'clang, cmake, ninja, GTK and dpkg tools.' =>
@@ -804,6 +846,10 @@ class AppLocalizations {
         _isRu
             ? 'Создаётся дерево rpmbuild, desktop-файл, иконка и spec-файл. Затем rpmbuild упаковывает приложение в RPM с установкой в /opt и ярлыком в системном меню.'
             : 'PackFoundry creates the rpmbuild tree, desktop file, icon, and spec file. Then rpmbuild packages the app into an RPM installed under /opt with a desktop launcher.',
+      'pacman' =>
+        _isRu
+            ? 'PackFoundry пишет PKGBUILD с метаданными, зависимостями, desktop-файлом и иконкой, затем makepkg собирает пакет .pkg.tar.zst с файлами .PKGINFO и .MTREE. Его ставят командой sudo pacman -U, приложение попадает в /opt и в меню.'
+            : 'PackFoundry writes a PKGBUILD with metadata, dependencies, desktop file and icon, then makepkg builds a .pkg.tar.zst package with .PKGINFO and .MTREE. Install it with sudo pacman -U; the app goes to /opt and the app menu.',
       'appimage' =>
         _isRu
             ? 'Создаётся AppDir: внутрь кладутся исполняемый файл, библиотеки, AppRun, desktop-файл и иконка. После этого appimagetool собирает один запускаемый AppImage-файл.'
@@ -850,6 +896,7 @@ class AppLocalizations {
     final translatedArtifact = switch (artifact) {
       'deb package' => 'deb пакет',
       'rpm package' => 'rpm пакет',
+      'pacman package' => 'pacman пакет',
       'tar.gz bundle' => 'tar.gz архив',
       'Inno Setup exe' => 'Inno Setup exe',
       _ => artifact,

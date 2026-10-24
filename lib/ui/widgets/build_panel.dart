@@ -1257,6 +1257,53 @@ EOF''',
       ];
     }
 
+    if (stepId == 'pacman') {
+      final pacmanDepends = _packageDependencies(
+        configuration,
+        type: 'pacman',
+        defaults: const ['gtk3', 'gcc-libs', 'xz'],
+      ).split(', ').map(_shellQuote).join(' ');
+      return [
+        r'PACMAN_ROOT="$WORK_ROOT/pacman"; mkdir -p "$PACMAN_ROOT"',
+        r'''cat > "$PACMAN_ROOT/$DESKTOP_ID.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$APP_NAME
+Exec=/opt/$PACKAGE_NAME/$EXECUTABLE_NAME
+Icon=$DESKTOP_ID
+StartupWMClass=$PACKAGE_NAME
+Categories=Utility;
+Terminal=false
+EOF''',
+        r'''case "$ICON" in
+  *.svg|*.SVG) PACMAN_ICON_DEST="usr/share/icons/hicolor/scalable/apps/$DESKTOP_ID.svg" ;;
+  *) PACMAN_ICON_DEST="usr/share/icons/hicolor/256x256/apps/$DESKTOP_ID.png" ;;
+esac''',
+        'PACMAN_DEPENDS=($pacmanDepends)',
+        r'''cat > "$PACMAN_ROOT/PKGBUILD" <<EOF
+pkgname=$PACKAGE_NAME
+pkgver=${VERSION//[-:]/.}
+pkgrel=1
+pkgdesc='$APP_NAME'
+arch=('$(uname -m)')
+license=('GPL-2.0-only')
+depends=(${PACMAN_DEPENDS[*]})
+options=('!strip' '!debug')
+
+package() {
+  install -dm755 "\$pkgdir/opt/$PACKAGE_NAME"
+  cp -a "$BUNDLE/." "\$pkgdir/opt/$PACKAGE_NAME/"
+  install -Dm644 "$PACMAN_ROOT/$DESKTOP_ID.desktop" "\$pkgdir/usr/share/applications/$DESKTOP_ID.desktop"
+  if [ -n "$ICON" ]; then install -Dm644 "$ICON" "\$pkgdir/$PACMAN_ICON_DEST"; fi
+}
+EOF''',
+        r'(cd "$PACMAN_ROOT" && PKGDEST="$PACMAN_ROOT/out" makepkg --force --nodeps --noconfirm)',
+        r'PACMAN_FILE="$(find "$PACMAN_ROOT/out" -type f -name "*.pkg.tar*" ! -name "*.sig" | head -n 1)"',
+        r'cp -f "$PACMAN_FILE" "$EXPORT/${APP_NAME}_linux_${VERSION}-1_${LINUX_ARTIFACT_ARCH}.${PACMAN_FILE##*.pkg.}"',
+        r'# Install: sudo pacman -U "$EXPORT/${APP_NAME}_linux_${VERSION}-1_${LINUX_ARTIFACT_ARCH}.pkg.tar.zst"',
+      ];
+    }
+
     if (stepId == 'appimage') {
       return const [
         r'APPDIR="$WORK_ROOT/$DESKTOP_ID.AppDir"; rm -rf "$APPDIR"; mkdir -p "$APPDIR/usr/bin"',

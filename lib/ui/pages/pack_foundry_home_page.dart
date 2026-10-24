@@ -82,6 +82,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   final _heightController = TextEditingController(text: '800');
   final _debAdditionalDependenciesController = TextEditingController();
   final _rpmAdditionalDependenciesController = TextEditingController();
+  final _pacmanAdditionalDependenciesController = TextEditingController();
   final _packageMetadataController = TextEditingController();
   final _packageDependenciesController = TextEditingController();
   final _buildLog = <BuildLogEntry>[];
@@ -127,6 +128,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   ToolAvailability _appImageToolStatus = ToolAvailability.available;
   ToolAvailability _debToolStatus = ToolAvailability.available;
   ToolAvailability _rpmToolStatus = ToolAvailability.available;
+  ToolAvailability _makepkgStatus = ToolAvailability.available;
+  ToolAvailability _fakerootStatus = ToolAvailability.available;
   ToolAvailability _tarToolStatus = ToolAvailability.available;
   ToolAvailability _zipToolStatus = ToolAvailability.available;
   ToolAvailability _javaStatus = ToolAvailability.available;
@@ -147,6 +150,11 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     BuildTarget(
       platform: 'Linux',
       artifact: 'rpm package',
+      status: TargetStatus.ready,
+    ),
+    BuildTarget(
+      platform: 'Linux',
+      artifact: 'pacman package',
       status: TargetStatus.ready,
     ),
     BuildTarget(
@@ -269,6 +277,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       _toolchainService.androidSdkAvailability(),
       _toolchainService.commandAvailability('git', ['--version']),
       _archiveToolsAvailable(),
+      _toolchainService.commandAvailability('makepkg', ['--version']),
+      _toolchainService.commandAvailability('fakeroot', ['--version']),
     ]);
 
     if (!mounted) {
@@ -293,7 +303,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       _androidSdkStatus = results[10];
       _gitStatus = results[11];
       _archiveToolsStatus = results[12];
+      _makepkgStatus = results[13];
+      _fakerootStatus = results[14];
       _updateAndroidTargetStatus();
+      _updatePacmanTargetStatus();
     });
   }
 
@@ -305,6 +318,27 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       target.status = androidReady
           ? TargetStatus.ready
           : TargetStatus.installable;
+    }
+  }
+
+  /// pacman packages are built natively with makepkg, so only Arch-based
+  /// hosts can produce them.
+  void _updatePacmanTargetStatus() {
+    final isArch = _hostDistribution.family == _LinuxDistributionFamily.arch;
+    final ready =
+        _makepkgStatus == ToolAvailability.installed &&
+        _fakerootStatus == ToolAvailability.installed;
+    for (final target in _targets.where(
+      (target) => target.artifact == 'pacman package',
+    )) {
+      target.status = !isArch
+          ? TargetStatus.hostLimited
+          : ready
+          ? TargetStatus.ready
+          : TargetStatus.installable;
+      if (!target.canSelect) {
+        target.selected = false;
+      }
     }
   }
 
@@ -378,10 +412,12 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     final distribution = _hostDistribution;
     final debGroup = _debBuildGroup(l10n, distribution);
     final rpmGroup = _rpmBuildGroup(l10n, distribution);
-    final nativePackageGroups =
-        distribution.family == _LinuxDistributionFamily.deb
-        ? [debGroup, rpmGroup]
-        : [rpmGroup, debGroup];
+    final pacmanGroup = _pacmanBuildGroup(l10n, distribution);
+    final nativePackageGroups = switch (distribution.family) {
+      _LinuxDistributionFamily.deb => [debGroup, rpmGroup, pacmanGroup],
+      _LinuxDistributionFamily.arch => [pacmanGroup, rpmGroup, debGroup],
+      _ => [rpmGroup, debGroup, pacmanGroup],
+    };
 
     return [
       _commonToolsGroup(l10n),
@@ -552,6 +588,47 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     );
   }
 
+  ToolchainGroup _pacmanBuildGroup(
+    AppLocalizations l10n,
+    _HostDistribution distribution,
+  ) {
+    final isArch = distribution.family == _LinuxDistributionFamily.arch;
+    return ToolchainGroup(
+      title: l10n.pacmanBuildGroupTitle,
+      subtitle: isArch
+          ? l10n.pacmanBuildNativeSubtitle(distribution.name)
+          : l10n.pacmanBuildUnsupportedSubtitle(distribution.name),
+      status: isArch ? _pacmanBuildStatus : ToolAvailability.missing,
+      installTarget: ToolchainInstallTarget.pacman,
+      installProgress: _installProgressFor(ToolchainInstallTarget.pacman),
+      dependencyNote: isArch ? _commonToolsDependencyNote(l10n) : null,
+      tools: [
+        _hostSystemTool(l10n, distribution),
+        if (isArch) ...[
+          _linuxToolchainTool(l10n),
+          ToolStatus(
+            name: 'makepkg',
+            command: 'makepkg',
+            status: _makepkgStatus,
+            note: l10n.makepkgNote,
+          ),
+          ToolStatus(
+            name: 'fakeroot',
+            command: 'fakeroot',
+            status: _fakerootStatus,
+            note: l10n.fakerootNote,
+          ),
+        ] else
+          ToolStatus(
+            name: l10n.hostPacmanCompatibilityToolName,
+            command: distribution.id,
+            status: ToolAvailability.missing,
+            note: l10n.hostPacmanCompatibilityToolNote,
+          ),
+      ],
+    );
+  }
+
   ToolchainGroup _appImageBuildGroup(AppLocalizations l10n) {
     return ToolchainGroup(
       title: l10n.appImageBuildGroupTitle,
@@ -713,6 +790,15 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     return ToolAvailability.available;
   }
 
+  ToolAvailability get _pacmanBuildStatus {
+    if (_linuxToolchainStatus == ToolAvailability.installed &&
+        _makepkgStatus == ToolAvailability.installed &&
+        _fakerootStatus == ToolAvailability.installed) {
+      return ToolAvailability.installed;
+    }
+    return ToolAvailability.available;
+  }
+
   ToolAvailability get _appImageBuildStatus {
     if (_linuxToolchainStatus == ToolAvailability.installed &&
         _appImageToolStatus == ToolAvailability.installed) {
@@ -790,6 +876,15 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       'elementary',
       'zorin',
     };
+    final archIds = {
+      'arch',
+      'archarm',
+      'manjaro',
+      'endeavouros',
+      'garuda',
+      'cachyos',
+      'artix',
+    };
     final tokens = {
       id,
       ...idLike.split(RegExp(r'\s+')).where((part) => part.isNotEmpty),
@@ -803,6 +898,9 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     }
     if (tokens.any(rpmIds.contains)) {
       return _LinuxDistributionFamily.rpm;
+    }
+    if (tokens.any(archIds.contains)) {
+      return _LinuxDistributionFamily.arch;
     }
     return _LinuxDistributionFamily.unknown;
   }
@@ -962,6 +1060,9 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       ToolchainInstallTarget.deb => _builderService.removeBuilder(
         BuilderEnvironment.debBookworm,
       ),
+      ToolchainInstallTarget.pacman => const ToolInstallResult.failure(
+        'pacman tool removal is not implemented yet.',
+      ),
       ToolchainInstallTarget.appImage => const ToolInstallResult.failure(
         'AppImageTool removal is not implemented yet.',
       ),
@@ -985,6 +1086,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     if (target == ToolchainInstallTarget.rpm &&
         distribution.family == _LinuxDistributionFamily.unsupportedRpm) {
       return ToolInstallResult.failure(l10n.rpmHostInstallUnsupported);
+    }
+    if (target == ToolchainInstallTarget.pacman &&
+        distribution.family != _LinuxDistributionFamily.arch) {
+      return ToolInstallResult.failure(l10n.pacmanHostInstallUnsupported);
     }
 
     final steps = switch (target) {
@@ -1014,6 +1119,17 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
                 packagesByManager: _debHostPackages,
               )
             : _builderSteps(l10n, BuilderEnvironment.debBookworm),
+      ToolchainInstallTarget.pacman =>
+        distribution.family == _LinuxDistributionFamily.arch
+            ? _hostBuildSteps(
+                l10n,
+                systemToolsReady:
+                    _linuxToolchainStatus == ToolAvailability.installed &&
+                    _makepkgStatus == ToolAvailability.installed &&
+                    _fakerootStatus == ToolAvailability.installed,
+                packagesByManager: _pacmanHostPackages,
+              )
+            : const <_ToolInstallStep>[],
       ToolchainInstallTarget.appImage => [
         ..._hostBuildSteps(
           l10n,
@@ -1277,6 +1393,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     _heightController.dispose();
     _debAdditionalDependenciesController.dispose();
     _rpmAdditionalDependenciesController.dispose();
+    _pacmanAdditionalDependenciesController.dispose();
     _packageMetadataController.dispose();
     _packageDependenciesController.dispose();
     super.dispose();
@@ -2340,6 +2457,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     return {
       'deb': _debAdditionalDependenciesController.text,
       'rpm': _rpmAdditionalDependenciesController.text,
+      'pacman': _pacmanAdditionalDependenciesController.text,
     }..removeWhere((key, value) => value.trim().isEmpty);
   }
 
@@ -2364,6 +2482,10 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       _restoreConfigText(
         _rpmAdditionalDependenciesController,
         config.additionalDependencies['rpm'],
+      );
+      _restoreConfigText(
+        _pacmanAdditionalDependenciesController,
+        config.additionalDependencies['pacman'],
       );
       if (config.windowWidth != null) {
         _widthController.text = config.windowWidth.toString();
@@ -2810,6 +2932,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       heightController: _heightController,
       debAdditionalDependenciesController: _debAdditionalDependenciesController,
       rpmAdditionalDependenciesController: _rpmAdditionalDependenciesController,
+      pacmanAdditionalDependenciesController:
+          _pacmanAdditionalDependenciesController,
       packageInspection: _packageInspection,
       packageMetadataController: _packageMetadataController,
       packageDependenciesController: _packageDependenciesController,
@@ -2919,7 +3043,7 @@ class _HostDistribution {
   final _LinuxDistributionFamily family;
 }
 
-enum _LinuxDistributionFamily { deb, rpm, unsupportedRpm, unknown }
+enum _LinuxDistributionFamily { deb, rpm, arch, unsupportedRpm, unknown }
 
 class _ProjectMetadata {
   const _ProjectMetadata({
@@ -2967,6 +3091,7 @@ class _WorkspaceContent extends StatelessWidget {
     required this.heightController,
     required this.debAdditionalDependenciesController,
     required this.rpmAdditionalDependenciesController,
+    required this.pacmanAdditionalDependenciesController,
     required this.packageInspection,
     required this.packageMetadataController,
     required this.packageDependenciesController,
@@ -3028,6 +3153,7 @@ class _WorkspaceContent extends StatelessWidget {
   final TextEditingController heightController;
   final TextEditingController debAdditionalDependenciesController;
   final TextEditingController rpmAdditionalDependenciesController;
+  final TextEditingController pacmanAdditionalDependenciesController;
   final PackageInspection? packageInspection;
   final TextEditingController packageMetadataController;
   final TextEditingController packageDependenciesController;
@@ -3135,6 +3261,7 @@ class _WorkspaceContent extends StatelessWidget {
         PackageDependenciesPanel(
           debController: debAdditionalDependenciesController,
           rpmController: rpmAdditionalDependenciesController,
+          pacmanController: pacmanAdditionalDependenciesController,
         ),
       ],
       2 => [
@@ -3165,6 +3292,7 @@ class _WorkspaceContent extends StatelessWidget {
                   additionalDependencies: {
                     'deb': debAdditionalDependenciesController.text,
                     'rpm': rpmAdditionalDependenciesController.text,
+                    'pacman': pacmanAdditionalDependenciesController.text,
                   }..removeWhere((key, value) => value.trim().isEmpty),
                 ),
           onBuild: onBuild,
@@ -3354,6 +3482,11 @@ const _tarGzHostPackages = {
   'apt-get': ['git', 'clang', 'cmake', 'ninja-build', 'libgtk-3-dev', 'tar'],
   'zypper': ['git', 'clang', 'cmake', 'ninja', 'gtk3-devel', 'tar'],
   'pacman': ['git', 'clang', 'cmake', 'ninja', 'gtk3', 'tar'],
+};
+
+/// makepkg ships with pacman itself; base-devel adds fakeroot and friends.
+const _pacmanHostPackages = {
+  'pacman': ['git', 'clang', 'cmake', 'ninja', 'gtk3', 'base-devel'],
 };
 
 const _appImageHostPackages = {

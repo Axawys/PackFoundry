@@ -14,6 +14,7 @@ class BuildService {
   static const _stepLocalBuild = 'local-build';
   static const _stepBundle = 'bundle';
   static const _stepRpm = 'rpm';
+  static const _stepPacman = 'pacman';
   static const _stepAppImage = 'appimage';
   static const _stepTarGz = 'targz';
   static const _stepDebContainer = 'deb-container';
@@ -475,6 +476,9 @@ class BuildService {
     final hasRpm = linuxTargets.any(
       (target) => target.artifact == 'rpm package',
     );
+    final hasPacman = linuxTargets.any(
+      (target) => target.artifact == 'pacman package',
+    );
     final hasAppImage = linuxTargets.any(
       (target) => target.artifact == 'AppImage',
     );
@@ -485,7 +489,7 @@ class BuildService {
       (target) => target.artifact == 'Inno Setup exe',
     );
     final hasApk = androidTargets.any((target) => target.artifact == 'APK');
-    final hasLocalBuild = hasRpm || hasAppImage || hasTarGz;
+    final hasLocalBuild = hasRpm || hasPacman || hasAppImage || hasTarGz;
     var number = 1;
 
     BuildRoadmapStep step({
@@ -537,6 +541,13 @@ class BuildService {
           id: _stepRpm,
           title: 'RPM',
           description: 'Generate spec metadata and run rpmbuild.',
+          estimatedSeconds: 25,
+        ),
+      if (hasPacman)
+        step(
+          id: _stepPacman,
+          title: 'PACMAN',
+          description: 'Generate a PKGBUILD and run makepkg.',
           estimatedSeconds: 25,
         ),
       if (hasAppImage)
@@ -1125,6 +1136,27 @@ class BuildService {
           ),
         );
         yield* _createRpmPackage(
+          configuration: configuration,
+          bundleDirectory: bundleDirectory,
+          outputDirectory: outputDirectory,
+        );
+      } else if (target.artifact == 'pacman package') {
+        yield const BuildEvent.roadmapUpdate(
+          BuildRoadmapUpdate(
+            id: _stepPacman,
+            state: BuildRoadmapStepState.running,
+            progress: 15,
+            detail: 'Preparing PKGBUILD and package metadata.',
+          ),
+        );
+        yield const BuildEvent.log(
+          BuildLogEntry(
+            title: 'Packaging pacman package',
+            detail: 'Preparing PKGBUILD and package metadata.',
+            state: BuildLogState.running,
+          ),
+        );
+        yield* _createPacmanPackage(
           configuration: configuration,
           bundleDirectory: bundleDirectory,
           outputDirectory: outputDirectory,
@@ -2200,6 +2232,262 @@ install -Dm0644 ${_shellQuote(iconFile.path)} $iconDestination
 * ${_rpmChangelogDate()} ${_rpmHeaderValue(_publisherName(configuration))} <${_rpmHeaderValue(_developerEmail(configuration))}> - $version-$release
 - Packaged with PackFoundry
 ''';
+  }
+
+  /// Builds an Arch Linux package with makepkg. makepkg writes the .PKGINFO
+  /// and .MTREE metadata that `pacman -U` requires; a plain archive of the
+  /// bundle is not installable by pacman.
+  Stream<BuildEvent> _createPacmanPackage({
+    required BuildConfiguration configuration,
+    required Directory bundleDirectory,
+    required Directory outputDirectory,
+  }) async* {
+    Stream<BuildEvent> fail(String detail) async* {
+      yield BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepPacman,
+          state: BuildRoadmapStepState.warning,
+          progress: 100,
+          detail: detail,
+        ),
+      );
+      yield BuildEvent.log(
+        BuildLogEntry(
+          title: 'pacman packaging failed',
+          detail: detail,
+          state: BuildLogState.warning,
+        ),
+      );
+    }
+
+    Directory? tempDirectory;
+    try {
+      final makepkg = await _findExecutable('makepkg');
+      if (makepkg == null) {
+        yield* fail(
+          'makepkg was not found in PATH. pacman packages are built on Arch Linux hosts.',
+        );
+        return;
+      }
+      if (await _findExecutable('fakeroot') == null) {
+        yield* fail(
+          'fakeroot was not found in PATH. Install base-devel and try again.',
+        );
+        return;
+      }
+
+      final executable = await _findBundleExecutable(bundleDirectory);
+      if (executable == null) {
+        yield* fail(
+          'Could not find the executable in the Flutter Linux bundle.',
+        );
+        return;
+      }
+
+      final appName = configuration.appName.trim().isEmpty
+          ? 'Flutter App'
+          : configuration.appName.trim();
+      final packageName = _slugify(appName);
+      final desktopFileId = _linuxDesktopFileId(appName);
+      final version = _pacmanVersion(await _readRpmVersion(configuration));
+
+      tempDirectory = await Directory.systemTemp.createTemp(
+        'pack_foundry_pacman_',
+      );
+      final startDirectory = Directory(_joinPath(tempDirectory.path, 'pkg'));
+      final packageDestination = Directory(
+        _joinPath(tempDirectory.path, 'out'),
+      );
+      final assetsDirectory = Directory(
+        _joinPath(tempDirectory.path, 'assets'),
+      );
+      await startDirectory.create(recursive: true);
+      await packageDestination.create(recursive: true);
+      await assetsDirectory.create(recursive: true);
+
+      final desktopFile = File(
+        _joinPath(assetsDirectory.path, '$desktopFileId.desktop'),
+      );
+      await desktopFile.writeAsString('''[Desktop Entry]
+Type=Application
+Name=${_escapeDesktopValue(appName)}
+Exec=/opt/$packageName/${_basename(executable.path)}
+Icon=$desktopFileId
+StartupWMClass=$packageName
+Categories=Utility;
+Terminal=false
+''');
+      final iconFile =
+          await _copyPackageIcon(
+            assetsDirectory: assetsDirectory,
+            iconPath: configuration.iconPath,
+            fileNameWithoutExtension: desktopFileId,
+          ) ??
+          await _writeFallbackRpmIcon(assetsDirectory, desktopFileId);
+
+      await File(_joinPath(startDirectory.path, 'PKGBUILD')).writeAsString(
+        _pkgbuild(
+          configuration: configuration,
+          appName: appName,
+          packageName: packageName,
+          desktopFileId: desktopFileId,
+          version: version,
+          bundleDirectory: bundleDirectory,
+          desktopFile: desktopFile,
+          iconFile: iconFile,
+          executableName: _basename(executable.path),
+        ),
+      );
+
+      yield const BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepPacman,
+          state: BuildRoadmapStepState.running,
+          progress: 50,
+          detail: 'Running makepkg.',
+        ),
+      );
+      // The user's makepkg.conf may point PKGDEST, BUILDDIR or SRCDEST
+      // elsewhere; keep every makepkg output inside the temporary folder.
+      final result = await Process.run(
+        makepkg.path,
+        ['--force', '--nodeps', '--noconfirm', '--noprogressbar'],
+        workingDirectory: startDirectory.path,
+        environment: {
+          'PKGDEST': packageDestination.path,
+          'BUILDDIR': _joinPath(tempDirectory.path, 'build'),
+          'SRCDEST': _joinPath(tempDirectory.path, 'src'),
+          'PACKAGER': _debianMaintainer(configuration),
+        },
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      if (result.exitCode != 0) {
+        yield* fail(_shortProcessOutput(result));
+        return;
+      }
+
+      File? packageFile;
+      await for (final entity in packageDestination.list()) {
+        final name = _basename(entity.path);
+        if (entity is File &&
+            name.contains('.pkg.tar') &&
+            !name.endsWith('.sig')) {
+          packageFile = entity;
+          break;
+        }
+      }
+      if (packageFile == null) {
+        yield* fail('makepkg finished, but no .pkg.tar file was found.');
+        return;
+      }
+
+      // Keep the compression makepkg.conf chose (zst by default).
+      final packageFileName = _basename(packageFile.path);
+      final extension = packageFileName.substring(
+        packageFileName.indexOf('.pkg.tar') + 1,
+      );
+      final outputFile = File(
+        _joinPath(
+          outputDirectory.path,
+          _artifactFileName(
+            appName: appName,
+            platform: 'linux',
+            version: '${version.version}-${version.release}',
+            architecture: _linuxArtifactArchitecture(),
+            extension: extension,
+          ),
+        ),
+      );
+      if (outputFile.existsSync()) {
+        await outputFile.delete();
+      }
+      await packageFile.copy(outputFile.path);
+
+      yield BuildEvent.roadmapUpdate(
+        BuildRoadmapUpdate(
+          id: _stepPacman,
+          state: BuildRoadmapStepState.success,
+          progress: 100,
+          detail: outputFile.path,
+        ),
+      );
+      yield BuildEvent.log(
+        BuildLogEntry(
+          title: 'Created pacman package',
+          detail:
+              '${outputFile.path}\nInstall: sudo pacman -U ${_shellQuote(outputFile.path)}',
+          state: BuildLogState.success,
+        ),
+      );
+    } finally {
+      if (tempDirectory != null && tempDirectory.existsSync()) {
+        await tempDirectory.delete(recursive: true);
+      }
+    }
+  }
+
+  String _pkgbuild({
+    required BuildConfiguration configuration,
+    required String appName,
+    required String packageName,
+    required String desktopFileId,
+    required _RpmVersion version,
+    required Directory bundleDirectory,
+    required File desktopFile,
+    required File iconFile,
+    required String executableName,
+  }) {
+    final iconDestination = _extension(iconFile.path).toLowerCase() == '.svg'
+        ? 'usr/share/icons/hicolor/scalable/apps/$desktopFileId.svg'
+        : 'usr/share/icons/hicolor/256x256/apps/$desktopFileId.png';
+    final depends = _packageDependencies(
+      configuration,
+      type: 'pacman',
+      defaults: const ['gtk3', 'gcc-libs', 'xz'],
+    ).split(', ').where((dependency) => dependency.isNotEmpty);
+    final homepage = configuration.homepageUrl.trim();
+
+    return '''pkgname=$packageName
+pkgver=${version.version}
+pkgrel=${version.release}
+pkgdesc=${_shellQuote(_rpmHeaderValue(_packageSummary(configuration, appName)))}
+arch=('${_pacmanArchitecture()}')
+${homepage.isEmpty ? '' : 'url=${_shellQuote(homepage)}\n'}license=(${_shellQuote(_packageLicense(configuration))})
+depends=(${depends.map(_shellQuote).join(' ')})
+# Flutter AOT snapshots are looked up by symbol; stripping can break them.
+options=('!strip' '!debug')
+
+package() {
+  install -dm755 "\$pkgdir/opt/$packageName"
+  cp -a ${_shellQuote(bundleDirectory.path)}/. "\$pkgdir/opt/$packageName/"
+  chmod 755 "\$pkgdir/opt/$packageName/"${_shellQuote(executableName)}
+  install -Dm644 ${_shellQuote(desktopFile.path)} "\$pkgdir/usr/share/applications/$desktopFileId.desktop"
+  install -Dm644 ${_shellQuote(iconFile.path)} "\$pkgdir/$iconDestination"
+}
+''';
+  }
+
+  /// pacman forbids '-' and ':' in pkgver and wants a numeric pkgrel.
+  _RpmVersion _pacmanVersion(_RpmVersion version) {
+    final pkgver = version.version.replaceAll(RegExp(r'[^A-Za-z0-9._+]'), '.');
+    final pkgrel = RegExp(r'^[1-9][0-9]*(\.[0-9]+)?$').hasMatch(version.release)
+        ? version.release
+        : '1';
+    return _RpmVersion(
+      version: pkgver.isEmpty ? '1.0.0' : pkgver,
+      release: pkgrel,
+    );
+  }
+
+  String _pacmanArchitecture() {
+    final architecture = Process.runSync('uname', [
+      '-m',
+    ]).stdout.toString().trim();
+    return switch (architecture) {
+      'aarch64' || 'arm64' => 'aarch64',
+      _ => 'x86_64',
+    };
   }
 
   Future<_RpmVersion> _readRpmVersion(BuildConfiguration configuration) async {

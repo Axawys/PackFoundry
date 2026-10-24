@@ -23,6 +23,7 @@ class BuildTarget {
       'AppImage' => 'appimage',
       'deb package' => 'deb',
       'rpm package' => 'rpm',
+      'pacman package' => 'pacman',
       'tar.gz bundle' => 'tar.gz',
       'Inno Setup exe' => '.exe',
       _ => artifact,

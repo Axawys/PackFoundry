@@ -14,13 +14,13 @@ PackFoundry — GUI-приложение на Flutter, которое помог
 
 ## Возможности
 
-- Сборка Linux-пакетов: AppImage, `.deb`, `.rpm`, `tar.gz`.
+- Сборка Linux-пакетов: AppImage, `.deb`, `.rpm`, pacman `.pkg.tar.zst` для Arch Linux и переносимый архив `tar.gz`.
 - Сборка Android APK через Flutter и локальный Android SDK.
 - Windows build kit: переносимый zip с проектом, Inno Setup config и PowerShell-скриптом для сборки `.exe` на Windows.
 - Управляемые container builders для сборки пакетов не под текущий дистрибутив: Debian builder для DEB, Fedora builder для RPM.
 - Быстрый режим host-сборки для формата текущего Linux-дистрибутива.
 - Установка и диагностика инструментов сборки прямо из настроек.
-- Дополнительные зависимости пакетов: `Depends` для DEB и `Requires` для RPM.
+- Дополнительные зависимости пакетов: `Depends` для DEB, `Requires` для RPM и `depends` для pacman.
 - Экран сборки из двух панелей: план этапов с прогрессом и консоль с командами выбранного этапа и журналом процессов.
 - Кнопка запуска проекта без сборки для быстрой проверки.
 - Инспектор готовых пакетов: метаданные, зависимости, иконка и дерево файлов внутри пакета.
@@ -35,7 +35,8 @@ PackFoundry — GUI-приложение на Flutter, которое помог
 | Linux | AppImage | Работает |
 | Linux | `.deb` | Работает нативно на DEB-based системах или через Debian builder |
 | Linux | `.rpm` | Работает нативно на Fedora/RHEL-like системах или через Fedora builder |
-| Linux | `tar.gz` | Работает |
+| Linux | pacman `.pkg.tar.zst` | Работает нативно на Arch-based системах через `makepkg` |
+| Linux | `tar.gz` | Работает; переносимый архив, а не пакет для пакетного менеджера |
 | Android | APK | Работает |
 | Windows | Inno Setup `.exe` | Работает через Windows build kit |
 | macOS | `.dmg` | Запланировано |
@@ -49,6 +50,7 @@ PackFoundry — GUI-приложение на Flutter, которое помог
 
 - RPM: host-инструменты или Fedora builder.
 - DEB: host-инструменты или Debian builder.
+- PACMAN: Linux toolchain, `makepkg` и `fakeroot` (`base-devel`) на Arch-based системе.
 - AppImage: Flutter/Linux toolchain и AppImageTool.
 - TAR.GZ: Flutter/Linux toolchain и `tar`.
 - EXE: создание Windows build kit.
@@ -68,7 +70,7 @@ PackFoundry — GUI-приложение на Flutter, которое помог
 - имя выходного пакета;
 - папка экспорта;
 - форматы установщиков;
-- дополнительные зависимости для DEB/RPM.
+- дополнительные зависимости для DEB/RPM/pacman.
 
 PackFoundry работает с временной копией проекта. Настройки вроде размера окна и иконки применяются к build workspace, исходный проект не переписывается.
 
@@ -182,23 +184,26 @@ $choose_in_packfoundry
     "appimage",
     "deb",
     "rpm",
+    "pacman",
     "tar.gz",
     "apk",
     "exe"
   ],
   "additionalDependencies": {
     "deb": "libgtk-3-0 | libgtk-3-0t64",
-    "rpm": "webkit2gtk4.1"
+    "rpm": "webkit2gtk4.1",
+    "pacman": "webkit2gtk-4.1"
   }
 }
 ```
 
-Поддерживаемые `packageTypes`: `appimage`, `deb`, `rpm`, `tar.gz`, `apk`, `exe`, `dmg`, `ipa`.
+Поддерживаемые `packageTypes`: `appimage`, `deb`, `rpm`, `pacman`, `tar.gz`, `apk`, `exe`, `dmg`, `ipa`.
 
 `additionalDependencies` добавляет зависимости к стандартному набору PackFoundry:
 
 - `deb` записывается в `Depends`;
-- `rpm` записывается в `Requires`.
+- `rpm` записывается в `Requires`;
+- `pacman` записывается в `depends` в PKGBUILD.
 
 ## Имена выходных файлов
 
@@ -215,6 +220,7 @@ HashChecker_linux_1.3.0_x64.AppImage
 HashChecker_linux_1.3.0_x64.tar.gz
 HashChecker_linux_1.3.0_x64.deb
 HashChecker_linux_1.3.0-1_x64.rpm
+HashChecker_linux_1.3.0-1_x64.pkg.tar.zst
 HashChecker_android_1.3.0_universal.apk
 HashChecker_windows_1.3.0_x64_build_kit.zip
 ```
@@ -226,7 +232,8 @@ PackFoundry создает временную копию проекта, при�
 - AppImage собирается через Linux release bundle и AppImageTool.
 - DEB собирается через `dpkg-deb`; на не-DEB системах используется Debian builder.
 - RPM собирается через `rpmbuild`; на не-RPM системах используется Fedora builder.
-- `tar.gz` упаковывает Linux release bundle.
+- pacman-пакет собирается через `makepkg` по сгенерированному PKGBUILD и ставится командой `sudo pacman -U <файл>.pkg.tar.zst`.
+- `tar.gz` упаковывает Linux release bundle в переносимый архив: его распаковывают и запускают `bundle/<имя>`. Пакетные менеджеры (`pacman -U`, `apt`, `dnf`) такой архив не устанавливают, для Arch используйте pacman-пакет.
 - APK собирается через `flutter build apk --release`.
 - Windows EXE собирается через переносимый build kit, который запускается на Windows.
 

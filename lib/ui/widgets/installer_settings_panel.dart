@@ -79,7 +79,13 @@ class InstallerSettingsPanel extends StatelessWidget {
                         target: target,
                         icon: _targetIcon(target),
                         title: target.displayLabel,
-                        subtitle: l10n.targetStatusLabel(target.status.name),
+                        // tar.gz is often mistaken for an installable
+                        // package, so say what it is instead of "ready".
+                        subtitle:
+                            target.artifact == 'tar.gz bundle' &&
+                                target.status == TargetStatus.ready
+                            ? l10n.tarGzTargetHint
+                            : l10n.targetStatusLabel(target.status.name),
                         onChanged: (selected) => onChanged(target, selected),
                       ),
                     ),

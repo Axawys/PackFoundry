@@ -110,6 +110,7 @@ class ProjectConfig {
       ('Linux', 'AppImage') => 'appimage',
       ('Linux', 'deb package') => 'deb',
       ('Linux', 'rpm package') => 'rpm',
+      ('Linux', 'pacman package') => 'pacman',
       ('Linux', 'tar.gz bundle') => 'tar.gz',
       ('Windows', 'Inno Setup exe') => 'exe',
       ('Android', 'APK') => 'apk',

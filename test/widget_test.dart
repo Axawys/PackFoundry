@@ -120,6 +120,100 @@ void main() {
     expect(steps.map((step) => step.id), isNot(contains('bundle')));
   });
 
+  test('creates a pacman roadmap preview from Arch target', () {
+    final target = BuildTarget(
+      platform: 'Linux',
+      artifact: 'pacman package',
+      status: TargetStatus.ready,
+      selected: true,
+    );
+
+    final steps = BuildService().createRoadmapPlan([target]);
+
+    expect(
+      steps.map((step) => step.id),
+      containsAllInOrder(<String>[
+        'project',
+        'workspace',
+        'local-build',
+        'bundle',
+        'pacman',
+        'summary',
+        'cleanup',
+      ]),
+    );
+    expect(target.displayLabel, 'pacman');
+    expect(
+      ProjectConfig.packageTypeForTarget(target.platform, target.artifact),
+      'pacman',
+    );
+  });
+
+  testWidgets('shows makepkg commands for the pacman step', (tester) async {
+    // Tall enough for the lazily built command list to show every command.
+    tester.view.physicalSize = const Size(1280, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final target = BuildTarget(
+      platform: 'Linux',
+      artifact: 'pacman package',
+      status: TargetStatus.ready,
+      selected: true,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: const [
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: BuildPanel(
+            selectedTargets: 1,
+            isBuilding: false,
+            progress: 0,
+            roadmapSteps: BuildService().createRoadmapPlan([target]),
+            log: const [],
+            configuration: BuildConfiguration(
+              appName: 'Hash Checker',
+              releaseTag: 'v2.1.1',
+              developerEmail: 'dev@example.com',
+              publisherName: 'Example Studio',
+              homepageUrl: 'https://example.com',
+              license: 'GPL-2.0-only',
+              description: 'Checks file hashes.',
+              projectPath: '/home/user/Hash Checker',
+              outputPath: '/home/user/Packages',
+              iconPath: null,
+              windowWidth: null,
+              windowHeight: null,
+              targets: [target],
+              additionalDependencies: const {'pacman': 'webkit2gtk-4.1'},
+            ),
+            onBuild: () {},
+            isRunning: false,
+            canRun: true,
+            onRun: () {},
+            onStop: () {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('PACMAN'));
+    await tester.pump();
+
+    expect(find.text('Commands · PACMAN'), findsOneWidget);
+    expect(
+      find.text("PACMAN_DEPENDS=('gtk3' 'gcc-libs' 'xz' 'webkit2gtk-4.1')"),
+      findsOneWidget,
+    );
+    expect(find.textContaining('makepkg --force --nodeps'), findsOneWidget);
+  });
+
   test('saves and loads PackFoundry project config', () async {
     final tempDir = await Directory.systemTemp.createTemp(
       'pack_foundry_config_test_',

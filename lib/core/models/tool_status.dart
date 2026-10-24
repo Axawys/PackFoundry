@@ -105,6 +105,15 @@ class ToolInstallProgress {
 
 enum ToolAvailability { installed, available, missing }
 
-enum ToolchainInstallTarget { common, rpm, deb, appImage, tarGz, exe, android }
+enum ToolchainInstallTarget {
+  common,
+  rpm,
+  deb,
+  pacman,
+  appImage,
+  tarGz,
+  exe,
+  android,
+}
 
 enum ToolchainCategory { common, platform }
