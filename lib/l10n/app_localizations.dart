@@ -159,6 +159,14 @@ class AppLocalizations {
       ? 'По умолчанию: build/pack_foundry'
       : 'Default: build/pack_foundry';
   String get outputFolder => _isRu ? 'Папка экспорта' : 'Output folder';
+  String defaultOutputAt(String path) =>
+      _isRu ? 'По умолчанию: $path' : 'Default: $path';
+  String get defaultOutputFolder =>
+      _isRu ? 'Папка экспорта по умолчанию' : 'Default output folder';
+  String get resetToBuiltIn => _isRu ? 'Сбросить' : 'Reset';
+  String get builtInOutputHint => _isRu
+      ? 'build/pack_foundry в папке проекта'
+      : 'build/pack_foundry inside the project';
 
   String get debBuildGroupTitle => 'DEB';
   String get rpmBuildGroupTitle => 'RPM';

@@ -81,8 +81,12 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   final _homepageUrlController = TextEditingController();
   final _licenseController = TextEditingController(text: 'GPL-2.0-only');
   final _descriptionController = TextEditingController();
-  final _widthController = TextEditingController(text: '1280');
-  final _heightController = TextEditingController(text: '800');
+  final _widthController = TextEditingController(
+    text: _WindowSize.packFoundryDefault.width.toString(),
+  );
+  final _heightController = TextEditingController(
+    text: _WindowSize.packFoundryDefault.height.toString(),
+  );
   final _debAdditionalDependenciesController = TextEditingController();
   final _rpmAdditionalDependenciesController = TextEditingController();
   final _pacmanAdditionalDependenciesController = TextEditingController();
@@ -103,6 +107,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   /// the user or a config, so switching projects may replace it.
   bool _iconAutoDetected = false;
   String? _outputPath;
+  String? _defaultOutputPath;
   PackageInspection? _packageInspection;
   bool _isBuilding = false;
   bool _isRunningProject = false;
@@ -196,6 +201,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     );
     _workspaceTabController.addListener(_handleWorkspaceTabChanged);
     _loadReleaseMetadata();
+    _loadDefaultOutputPath();
     _loadConfigPresets();
     if (widget.enableToolchainDiagnostics) {
       _refreshToolchainStatus();
@@ -224,6 +230,16 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     _restoreControllerText(_homepageUrlController, metadata.homepageUrl);
     _restoreControllerText(_descriptionController, metadata.description);
     _attachMetadataListeners();
+  }
+
+  Future<void> _loadDefaultOutputPath() async {
+    final path = await _appPreferences.loadDefaultOutputPath();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _defaultOutputPath = path;
+    });
   }
 
   void _restoreControllerText(
@@ -1458,7 +1474,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       license: _licenseController.text,
       description: _descriptionController.text,
       projectPath: projectPath,
-      outputPath: _outputPath,
+      outputPath: _outputPath ?? _defaultOutputPath,
       iconPath: _iconPath,
       windowWidth: int.tryParse(_widthController.text),
       windowHeight: int.tryParse(_heightController.text),
@@ -2716,8 +2732,15 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   }
 
   _WindowSize? _readFlutterWindowSize(String projectPath) {
-    return _readLinuxWindowSize(projectPath) ??
+    final size =
+        _readLinuxWindowSize(projectPath) ??
         _readWindowsWindowSize(projectPath);
+    // `flutter create` always writes 1280x720, so that size says nothing about
+    // what the developer wants; offer the PackFoundry default instead.
+    if (size != null && size.isFlutterTemplate) {
+      return _WindowSize.packFoundryDefault;
+    }
+    return size;
   }
 
   _WindowSize? _readLinuxWindowSize(String projectPath) {
@@ -2776,6 +2799,24 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     setState(() {
       _outputPath = path;
     });
+  }
+
+  Future<void> _chooseDefaultOutputFolder() async {
+    final path = await getDirectoryPath(
+      confirmButtonText: context.l10n.chooseOutput,
+    );
+    if (path == null || !mounted) {
+      return;
+    }
+
+    await _setDefaultOutputPath(path);
+  }
+
+  Future<void> _setDefaultOutputPath(String? path) async {
+    setState(() {
+      _defaultOutputPath = path;
+    });
+    await _appPreferences.saveDefaultOutputPath(path);
   }
 
   Future<void> _chooseIconFile() async {
@@ -2953,6 +2994,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       activeConfigPath: _activeConfigPath,
       iconPath: _iconPath,
       outputPath: _outputPath,
+      defaultOutputPath: _defaultOutputPath,
       appNameController: _appNameController,
       releaseTagController: _releaseTagController,
       developerEmailController: _developerEmailController,
@@ -2996,6 +3038,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       onRemoveConfigPreset: _removeConfigPreset,
       onChooseIcon: _chooseIconFile,
       onChooseOutput: _chooseOutputFolder,
+      onChooseDefaultOutput: _chooseDefaultOutputFolder,
+      onResetDefaultOutput: () => _setDefaultOutputPath(null),
       onChoosePackage: _choosePackageFile,
       onTargetChanged: _setTargetSelection,
       onSaveEditedPackage: _saveEditedPackage,
@@ -3092,8 +3136,12 @@ class _ProjectMetadata {
 class _WindowSize {
   const _WindowSize({required this.width, required this.height});
 
+  static const packFoundryDefault = _WindowSize(width: 1920, height: 1080);
+
   final int width;
   final int height;
+
+  bool get isFlutterTemplate => width == 1280 && height == 720;
 }
 
 class _WorkspaceContent extends StatelessWidget {
@@ -3110,6 +3158,7 @@ class _WorkspaceContent extends StatelessWidget {
     required this.activeConfigPath,
     required this.iconPath,
     required this.outputPath,
+    required this.defaultOutputPath,
     required this.appNameController,
     required this.releaseTagController,
     required this.developerEmailController,
@@ -3150,6 +3199,8 @@ class _WorkspaceContent extends StatelessWidget {
     required this.onRemoveConfigPreset,
     required this.onChooseIcon,
     required this.onChooseOutput,
+    required this.onChooseDefaultOutput,
+    required this.onResetDefaultOutput,
     required this.onChoosePackage,
     required this.onTargetChanged,
     required this.onSaveEditedPackage,
@@ -3172,6 +3223,7 @@ class _WorkspaceContent extends StatelessWidget {
   final String? activeConfigPath;
   final String? iconPath;
   final String? outputPath;
+  final String? defaultOutputPath;
   final TextEditingController appNameController;
   final TextEditingController releaseTagController;
   final TextEditingController developerEmailController;
@@ -3212,6 +3264,8 @@ class _WorkspaceContent extends StatelessWidget {
   final ValueChanged<ConfigPreset> onRemoveConfigPreset;
   final VoidCallback onChooseIcon;
   final VoidCallback onChooseOutput;
+  final VoidCallback onChooseDefaultOutput;
+  final VoidCallback onResetDefaultOutput;
   final VoidCallback onChoosePackage;
   final void Function(BuildTarget target, bool selected) onTargetChanged;
   final VoidCallback onSaveEditedPackage;
@@ -3238,6 +3292,9 @@ class _WorkspaceContent extends StatelessWidget {
           localeMode: localeMode,
           onThemeModeChanged: onThemeModeChanged,
           onLocaleModeChanged: onLocaleModeChanged,
+          defaultOutputPath: defaultOutputPath,
+          onChooseDefaultOutput: onChooseDefaultOutput,
+          onResetDefaultOutput: onResetDefaultOutput,
         ),
       ],
       1 => [
@@ -3283,6 +3340,7 @@ class _WorkspaceContent extends StatelessWidget {
         InstallerSettingsPanel(
           appNameController: appNameController,
           outputPath: outputPath,
+          defaultOutputPath: defaultOutputPath,
           targets: targets,
           onChooseOutput: onChooseOutput,
           onChanged: onTargetChanged,
@@ -3314,7 +3372,7 @@ class _WorkspaceContent extends StatelessWidget {
                   license: licenseController.text,
                   description: descriptionController.text,
                   projectPath: projectPath!,
-                  outputPath: outputPath,
+                  outputPath: outputPath ?? defaultOutputPath,
                   iconPath: iconPath,
                   windowWidth: int.tryParse(widthController.text),
                   windowHeight: int.tryParse(heightController.text),

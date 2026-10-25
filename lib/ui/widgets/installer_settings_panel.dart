@@ -9,6 +9,7 @@ class InstallerSettingsPanel extends StatelessWidget {
   const InstallerSettingsPanel({
     required this.appNameController,
     required this.outputPath,
+    required this.defaultOutputPath,
     required this.targets,
     required this.onChooseOutput,
     required this.onChanged,
@@ -17,6 +18,7 @@ class InstallerSettingsPanel extends StatelessWidget {
 
   final TextEditingController appNameController;
   final String? outputPath;
+  final String? defaultOutputPath;
   final List<BuildTarget> targets;
   final VoidCallback onChooseOutput;
   final void Function(BuildTarget target, bool selected) onChanged;
@@ -46,7 +48,10 @@ class InstallerSettingsPanel extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  outputPath ?? l10n.defaultOutput,
+                  outputPath ??
+                      (defaultOutputPath == null
+                          ? l10n.defaultOutput
+                          : l10n.defaultOutputAt(defaultOutputPath!)),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),

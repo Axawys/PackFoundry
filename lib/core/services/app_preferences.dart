@@ -11,6 +11,7 @@ class AppPreferences {
   static const _homepageUrlKey = 'homepageUrl';
   static const _projectDescriptionKey = 'projectDescription';
   static const _configPresetsKey = 'configPresets';
+  static const _defaultOutputPathKey = 'defaultOutputPath';
 
   Future<AppSettings> load() async {
     final preferences = await SharedPreferences.getInstance();
@@ -66,6 +67,23 @@ class AppPreferences {
   Future<void> saveConfigPresetPaths(List<String> paths) async {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setStringList(_configPresetsKey, paths);
+  }
+
+  /// Export folder used when a project has no folder of its own; null means
+  /// the built-in build/pack_foundry inside the project.
+  Future<String?> loadDefaultOutputPath() async {
+    final preferences = await SharedPreferences.getInstance();
+    final path = preferences.getString(_defaultOutputPathKey)?.trim();
+    return path == null || path.isEmpty ? null : path;
+  }
+
+  Future<void> saveDefaultOutputPath(String? path) async {
+    final preferences = await SharedPreferences.getInstance();
+    if (path == null || path.trim().isEmpty) {
+      await preferences.remove(_defaultOutputPathKey);
+    } else {
+      await preferences.setString(_defaultOutputPathKey, path.trim());
+    }
   }
 
   ThemeMode _themeModeFromName(String? name) {

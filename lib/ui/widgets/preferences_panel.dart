@@ -10,6 +10,9 @@ class PreferencesPanel extends StatelessWidget {
     required this.localeMode,
     required this.onThemeModeChanged,
     required this.onLocaleModeChanged,
+    required this.defaultOutputPath,
+    required this.onChooseDefaultOutput,
+    required this.onResetDefaultOutput,
     super.key,
   });
 
@@ -17,6 +20,9 @@ class PreferencesPanel extends StatelessWidget {
   final AppLocaleMode localeMode;
   final ValueChanged<ThemeMode> onThemeModeChanged;
   final ValueChanged<AppLocaleMode> onLocaleModeChanged;
+  final String? defaultOutputPath;
+  final VoidCallback onChooseDefaultOutput;
+  final VoidCallback onResetDefaultOutput;
 
   @override
   Widget build(BuildContext context) {
@@ -77,6 +83,29 @@ class PreferencesPanel extends StatelessWidget {
               selected: {localeMode},
               onSelectionChanged: (selection) =>
                   onLocaleModeChanged(selection.single),
+            ),
+          ),
+          const SizedBox(height: 14),
+          _PreferenceRow(
+            label: l10n.defaultOutputFolder,
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: onChooseDefaultOutput,
+                  icon: const Icon(Icons.folder_special_outlined),
+                  label: Text(l10n.chooseFolder),
+                ),
+                if (defaultOutputPath != null)
+                  TextButton.icon(
+                    onPressed: onResetDefaultOutput,
+                    icon: const Icon(Icons.restart_alt_outlined),
+                    label: Text(l10n.resetToBuiltIn),
+                  ),
+                Text(defaultOutputPath ?? l10n.builtInOutputHint),
+              ],
             ),
           ),
         ],
