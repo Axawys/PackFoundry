@@ -1298,8 +1298,8 @@ class BuildService {
         _joinPath(scriptsDirectory.path, 'build_windows.ps1'),
       ).writeAsString(_windowsBuildPowerShellScript(appName: appName));
       await File(
-        _joinPath(kitRoot.path, 'README_WINDOWS_BUILD.txt'),
-      ).writeAsString(_windowsBuildKitReadme(appName));
+        _joinPath(kitRoot.path, 'build_windows.cmd'),
+      ).writeAsString(_windowsBuildLauncherScript());
 
       yield const BuildEvent.roadmapUpdate(
         BuildRoadmapUpdate(
@@ -1803,26 +1803,21 @@ Get-ChildItem \$OutputDir
 ''';
   }
 
-  String _windowsBuildKitReadme(String appName) {
-    return '''PackFoundry Windows build kit for $appName
-
-1. Copy this folder to Windows 10/11.
-2. Open PowerShell in this folder.
-3. Run:
-
-   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-   .\\scripts\\build_windows.ps1
-
-The script prints every step, installs missing tools through winget when possible,
-builds the Flutter Windows release bundle, runs Inno Setup and writes the final
-EXE installer into the output folder next to this file.
-
-Required Windows-side tools prepared by the script:
-- Git, if Flutter SDK must be downloaded.
-- Flutter SDK stable channel, stored in %LOCALAPPDATA%\\PackFoundry\\flutter.
-- Visual Studio 2022 Build Tools with C++ workload.
-- Inno Setup 6.
-''';
+  // Double-clickable launcher, so the user does not have to open PowerShell
+  // and relax the execution policy by hand. cmd.exe expects CRLF line endings.
+  String _windowsBuildLauncherScript() {
+    return const [
+      '@echo off',
+      'setlocal',
+      'cd /d "%~dp0"',
+      'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\\build_windows.ps1" %*',
+      'set "EXIT_CODE=%ERRORLEVEL%"',
+      'echo.',
+      'if not "%EXIT_CODE%"=="0" echo Build failed with exit code %EXIT_CODE%.',
+      'pause',
+      'exit /b %EXIT_CODE%',
+      '',
+    ].join('\r\n');
   }
 
   String _innoValue(String value) {

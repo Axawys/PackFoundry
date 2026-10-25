@@ -106,6 +106,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
   PackageInspection? _packageInspection;
   bool _isBuilding = false;
   bool _isRunningProject = false;
+
   /// Whether the selected project has a desktop runner. Without one there is
   /// nothing `flutter run` could launch, so the run action stays hidden.
   bool _hasDesktopRunner = false;
@@ -719,8 +720,8 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
           showCommand: false,
         ),
         ToolStatus(
-          name: 'PowerShell build script',
-          command: 'scripts/build_windows.ps1',
+          name: 'Windows build script',
+          command: 'build_windows.cmd',
           status: ToolAvailability.installed,
           note: l10n.windowsBuildScriptNote,
         ),
@@ -1799,7 +1800,9 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
         return null;
       }
 
-      final authorized = devices.where((device) => device.isAuthorized).toList();
+      final authorized = devices
+          .where((device) => device.isAuthorized)
+          .toList();
       if (authorized.length == 1) {
         return authorized.first;
       }
@@ -1908,7 +1911,11 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
     // source, so retrying with an explicit downgrade is what the user wants.
     if (result.contains('INSTALL_FAILED_VERSION_DOWNGRADE')) {
       _logAdbResult('Retrying install with downgrade allowed', result);
-      result = await _runAdbInstall(device.serial, apkPath, allowDowngrade: true);
+      result = await _runAdbInstall(
+        device.serial,
+        apkPath,
+        allowDowngrade: true,
+      );
       if (result.isSuccess) {
         return true;
       }
@@ -2970,9 +2977,7 @@ class _PackFoundryHomePageState extends State<PackFoundryHomePage>
       canRunProject: _projectPath != null && _hasDesktopRunner,
       canSendToDevice:
           _projectPath != null &&
-          _targets.any(
-            (target) => target.artifact == 'APK' && target.selected,
-          ),
+          _targets.any((target) => target.artifact == 'APK' && target.selected),
       isSendingToDevice: _isSendingToDevice,
       sendToDeviceStatus: _sendToDeviceStatus,
       progress: _buildProgress,

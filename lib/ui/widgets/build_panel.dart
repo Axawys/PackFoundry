@@ -1490,8 +1490,9 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 INNO''',
+        r'''printf '%s\r\n' '@echo off' 'setlocal' 'cd /d "%~dp0"' 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\build_windows.ps1" %*' 'set "EXIT_CODE=%ERRORLEVEL%"' 'echo.' 'if not "%EXIT_CODE%"=="0" echo Build failed with exit code %EXIT_CODE%.' 'pause' 'exit /b %EXIT_CODE%' > "$WINDOWS_KIT/build_windows.cmd"''',
         r'cd "$WORK_ROOT" && zip -qr "$EXPORT/${APP_NAME}_windows_${VERSION}_x64_build_kit.zip" "$(basename "$WINDOWS_KIT")"',
-        r'# On Windows: powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1',
+        r'# On Windows: double-click build_windows.cmd',
       ];
     }
 

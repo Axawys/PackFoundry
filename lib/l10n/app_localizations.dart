@@ -382,14 +382,14 @@ class AppLocalizations {
       ? const [
           'Во вкладке Project выберите Windows / Inno Setup exe, затем во вкладке Build соберите пакеты.',
           'В папке экспорта появится *_windows_build_kit.zip. Скопируйте его в Windows 10/11 или Windows VM.',
-          r'Распакуйте архив, откройте PowerShell в распакованной папке и запустите: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; .\scripts\build_windows.ps1',
+          'Распакуйте архив и запустите build_windows.cmd двойным щелчком. Если Windows покажет предупреждение SmartScreen, нажмите «Подробнее» → «Выполнить в любом случае».',
           'Скрипт сам проверит Flutter, Visual Studio Build Tools, Inno Setup и Developer Mode. Если попросит включить Developer Mode, включите его и запустите скрипт снова.',
           'Готовый EXE-установщик появится в папке output рядом со скриптом.',
         ]
       : const [
           'In Project, select Windows / Inno Setup exe, then build packages from the Build workspace.',
           'The export folder will contain *_windows_build_kit.zip. Copy it to Windows 10/11 or a Windows VM.',
-          r'Extract the archive, open PowerShell in the extracted folder and run: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; .\scripts\build_windows.ps1',
+          'Extract the archive and double-click build_windows.cmd. If Windows shows a SmartScreen warning, click "More info" → "Run anyway".',
           'The script checks Flutter, Visual Studio Build Tools, Inno Setup and Developer Mode. If it asks for Developer Mode, enable it and run the script again.',
           'The final EXE installer appears in the output folder next to the script.',
         ];
@@ -886,8 +886,8 @@ class AppLocalizations {
             : 'PackFoundry creates the Debian package layout: DEBIAN/control, /opt app files, desktop file, and icons. Then dpkg-deb builds the final .deb.',
       'windows-kit' =>
         _isRu
-            ? 'PackFoundry складывает во временную папку копию проекта, настройки Inno Setup, выбранную иконку и PowerShell-скрипт. Затем всё упаковывается в zip, который можно перенести в Windows и запустить без сетевой настройки VM.'
-            : 'PackFoundry puts a project copy, Inno Setup config, selected icon and PowerShell script into a temporary folder. Then it zips everything so it can be moved to Windows and run without VM network setup.',
+            ? 'PackFoundry складывает во временную папку копию проекта, настройки Inno Setup, выбранную иконку, PowerShell-скрипт и build_windows.cmd для запуска двойным щелчком. Затем всё упаковывается в zip, который можно перенести в Windows и запустить без сетевой настройки VM.'
+            : 'PackFoundry puts a project copy, Inno Setup config, selected icon, PowerShell script and a double-clickable build_windows.cmd into a temporary folder. Then it zips everything so it can be moved to Windows and run without VM network setup.',
       'summary' =>
         _isRu
             ? 'На этом этапе PackFoundry подтверждает, что выбранные артефакты записаны в папку экспорта, и завершает общий прогресс сборки.'
